@@ -1,8 +1,10 @@
-import psycopg2
-import getpass
 from armamentarium import env
 from dotenv import load_dotenv
 from psycopg2 import sql
+
+import hashlib
+import getpass
+import psycopg2
 
 load_dotenv()  # Remove for prod
 
@@ -113,6 +115,8 @@ def create_flag_submissions_table(cursor: psycopg2.extensions.cursor) -> None:
 def insert_test_data(cursor: psycopg2.extensions.cursor) -> None:
     series_table = env('POSTGRESQL_SERIES_TABLE')[0]
     challenges_table = env('POSTGRESQL_CHALLENGES_TABLE')[0]
+    flag = env('COLOSSEUM_TEST_FLAG', "CTF{f4k3_fl4g_f0r_t3st1ng}")[0]
+    flag_hash = hashlib.md5(flag.encode('utf-8')).hexdigest()
 
     cursor.execute(
         sql.SQL("""
@@ -127,7 +131,7 @@ def insert_test_data(cursor: psycopg2.extensions.cursor) -> None:
             INSERT INTO {} (cid, sid, title, description, difficulty, points, category, flag)
             VALUES (0, 0, 'Check', 'This challenge has no points', 'Sanity Check', 0, 'Warmup', {})
             ON CONFLICT DO NOTHING;
-        """).format(sql.Identifier(challenges_table), sql.Literal("CTF{f4k3_fl4g_f0r_t3st1ng}"))
+        """).format(sql.Identifier(challenges_table), sql.Literal(flag_hash))
     )
 
 

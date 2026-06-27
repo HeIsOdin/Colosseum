@@ -12,6 +12,7 @@ from armamentarium import env, raise_on_invalid_creds
 import os
 import uuid
 import bcrypt
+import hashlib
 import logging
 import psycopg2
 
@@ -42,14 +43,26 @@ def unauthorized():
         'redirect':'login.html'
     })
 
+class User(UserMixin):
+    def __init__(self, pid: str, sids: list | None = None):
+        self.id = pid
+        self.sids = sids or [0]
+
 @login_manager.user_loader
 def load_user(user_id):
-    return User(user_id)
-
-class User(UserMixin):
-    def __init__(self, pid: str, sids: list = [0]):
-        self.id = pid
-        self.sids = sids
+    db_params = ' '.join([f"{k}={v}" for k, v in dict(app.config["COLOSSEUM_DB"]).items()])
+    with psycopg2.connect(db_params) as conn:
+        with conn.cursor() as cursor:
+            table = psycopg2.sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
+            query = psycopg2.sql.SQL("SELECT sids FROM {table} WHERE pid = %s").format(
+                table=table
+            )
+            cursor.execute(query, (user_id,))
+            res = cursor.fetchone()
+            if not res:
+                return None
+            sids = list(res[0]) if res[0] is not None else [0]
+    return User(user_id, sids)
 
 def series_signup_required(f):
     @wraps(f)
@@ -485,6 +498,8 @@ def _submit_flag(sid: int, cid: int, pid: str, submitted_flag: str) -> tuple[boo
     """
     logger = logging.getLogger('Hypogeum')
     try:
+        submitted_flag_hash = hashlib.md5(submitted_flag.strip().encode('utf-8')).hexdigest()
+
         SIDS = dict(app.config['COLOSSEUM_DATA']["sids"])
         if sid not in SIDS: raise ValueError(f"Series {sid} is unavailable or not found.")
         CIDS = dict(SIDS[sid]["cids"])
@@ -506,7 +521,7 @@ def _submit_flag(sid: int, cid: int, pid: str, submitted_flag: str) -> tuple[boo
         db_params = ' '.join([f"{k}={v}" for k, v in dict(app.config["COLOSSEUM_DB"]).items()])
         with psycopg2.connect(db_params) as conn:
             with conn.cursor() as cursor:
-                cursor.execute(query, (pid, sid, cid, submitted_flag))
+                cursor.execute(query, (pid, sid, cid, submitted_flag_hash))
                 res = cursor.fetchall()
                 if not res: return False, "Wrong Flag", 404
                 _control_challenge_instance(sid, cid, pid, "stop")
@@ -583,7 +598,7 @@ def _get_player_data(pid: str) -> tuple[dict, bool, str, int]:
         logger.exception(f"Error retrieving player data for Player ID {pid}: {e}")
         return {}, False, "Internal server error", 500
 
-@app.get('/players/<int:pid>/')
+@app.get('/players/<uuid:pid>/')
 def get_player_data(pid: str):
     player_data, success, message, status_code = _get_player_data(pid)
     return jsonify({"success": success, "message": message, "player": player_data}), status_code
@@ -628,7 +643,7 @@ def _add_player_to_series(sid: int, pid: str) -> tuple[bool, str, int]:
         logger.exception(f"Error adding player to Series ID {sid}: {e}")
         return False, "Internal server error", 500
 
-@app.put('/series/<int:sid>/players/<int:pid>/')
+@app.put('/series/<int:sid>/players/<uuid:pid>/')
 @login_required
 def add_player_to_series(sid, pid):
     success, message, status_code = _add_player_to_series(sid, pid)
@@ -683,7 +698,7 @@ def _remove_player_from_series(sid: int, pid: str) -> tuple[bool, str, int]:
         logger.exception(f"Error removing player from Series ID {sid}: {e}")
         return False, "Internal server error", 500
 
-@app.delete('/series/<int:sid>/players/<int:pid>/')
+@app.delete('/series/<int:sid>/players/<uuid:pid>/')
 @login_required
 def remove_player_from_series(sid, pid):
     success, message, status_code = _remove_player_from_series(sid, pid)
@@ -703,7 +718,7 @@ def health() -> dict[str, list]:
     cid: int = 0
     email: str = uuid.uuid4().hex + "@oluwajuwon.dev"
     password: str = uuid.uuid4().hex
-    test_flag: str = "CTF{f4k3_fl4g_f0r_t3st1ng}"
+    test_flag: str = env('COLOSSEUM_TEST_FLAG', "CTF{f4k3_fl4g_f0r_t3st1ng}")[0]
     
     checklist.append("User Registration was successful.")
     try:
