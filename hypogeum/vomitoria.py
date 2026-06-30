@@ -393,8 +393,10 @@ def register():
     data = request.get_json(silent=True)
     if data is None:
         data = request.form.to_dict()
-    email = str(data.get("email"))
-    password = str(data.get("password"))
+    email = data.get("email")
+    password = data.get("password")
+    if not isinstance(email, str) or not isinstance(password, str):
+        return jsonify({"success": False, "message": "Email and password are required."}), 400
     success, message, status_code = _register(email, password)
     return jsonify({"success": success, "message": message}), status_code
 

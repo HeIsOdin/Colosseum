@@ -229,6 +229,9 @@ def _create_series(title: str, description: str, starts_at_str: str,
             conn.commit()
         refresh_series_and_challenges(REDIS_CLIENT)
         return sid, True, f"Series {title} created successfully.", 201
+    except TypeError as te:
+        logger.debug(f"Type error while creating series '{title}': {te}")
+        return "", False, "Invalid data type provided.", 400
     except ValueError as ve:
         logger.debug(f"Validation error while creating series '{title}': {ve}")
         return "", False, str(ve), 400
