@@ -91,7 +91,7 @@ def _integration_test() -> tuple[dict, bool, str, int]:
         return {"checklist": checklist, "checks": checks}, False, "Internal Server Error", 500
 
 @sanitarium_bp.get('/integration-test')
-#@admin_required
+@admin_required
 def integration_test():
     """
     Perform an integration test to check the health of the Sanitarium service.
@@ -134,7 +134,7 @@ def _bootstrap_and_test(data: dict[str, str]) -> tuple[dict, bool, str, int]:
         return {}, False, "Internal Server Error", 500
 
 @sanitarium_bp.patch('/bootstrap')
-#@admin_required
+@admin_required
 def bootstrap_and_test():
     """
     Bootstrap the Colosseum service by setting up the database and necessary configurations.
