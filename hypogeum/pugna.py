@@ -62,13 +62,15 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
                     if cursor.fetchone() is None:
                         return "", False, "Prerequisite challenge must exist in the same series.", 400
             normalized_challenge["prerequisite"] = prerequisite
-        require_instance_raw = normalized_challenge.get("requires_instance")
-        if require_instance_raw is None:
+        value = normalized_challenge.get("requires_instance")
+        if value is None:
             require_instance = False
-        elif isinstance(require_instance_raw, str):
-            require_instance = require_instance_raw.lower() in ("true", "1", "yes")
-        elif isinstance(require_instance_raw, bool):
-            require_instance = require_instance_raw
+        elif isinstance(value, str) and value.lower() in ("true", "1", "yes"):
+            require_instance = True
+        elif isinstance(value, str) and value.lower() in ("false", "0", "no"):
+            require_instance = False
+        elif isinstance(value, bool):
+            require_instance = value
         else:
             return "", False, "Invalid value for requires_instance. Must be a boolean.", 400
         normalized_challenge["requires_instance"] = require_instance
@@ -76,11 +78,14 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
         file_url = normalized_challenge.get("file_url")
         if file_url is not None:
             if not isinstance(file_url, str):
-                return "", False, "Invalid file_url.", 400
+                return "", False, "file_url must be a string.", 400
             file_url = file_url.strip()
-            if len(file_url ) == 0 or len(file_url) > 2048:
-                return "", False, "Invalid file_url length.", 400
-            normalized_challenge["file_url"] = file_url
+            if not file_url:
+                normalized_challenge.pop("file_url", None)
+            elif len(file_url) > 2048:
+                return "", False, "file_url must not exceed 2048 characters.", 400
+            else:
+                normalized_challenge["file_url"] = file_url
 
         if normalized_challenge["difficulty"] not in DIFFICULTY_LEVELS:
             return "", False, "Invalid difficulty.", 400
@@ -194,7 +199,7 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[
     try:
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
-        require_instance_query = sql.SQL("SELECT requires_instance FROM {table}" \
+        require_instance_query = sql.SQL("SELECT requires_instance FROM {table} " \
                                          "WHERE sid = %s AND cid = %s").format(
                                             table=challenges_table
                                         )
@@ -235,7 +240,7 @@ def control_challenge_instance(sid: int, cid: int):
     if data is None:
         data = request.form.to_dict()
     action = data.get("action")
-    if not action:
+    if not action or not isinstance(action, str):
         return jsonify({"success": False, "message": "Action is required."}), 400
     action = action.strip().lower()
     pid = as_uuid(current_user.id)
@@ -465,7 +470,8 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
         "points": "0",
         "difficulty": "Sanity Check",
         "category": "Warmup",
-        "flag": env('COLOSSEUM_TEST_FLAG', "CTF{f4k3_fl4g_f0r_t3st1ng}")[0]
+        "flag": env('COLOSSEUM_TEST_FLAG', "CTF{f4k3_fl4g_f0r_t3st1ng}")[0],
+        "requires_instance": True,
     }
 
     cid: int| None = None

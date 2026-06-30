@@ -110,7 +110,7 @@ def _create_challenges_table(cursor: psycopg2.extensions.cursor) -> None:
                 prerequisite INTEGER REFERENCES {}(cid) ON DELETE SET NULL,
                 flag VARCHAR(255) NOT NULL,
                 requires_instance BOOLEAN NOT NULL DEFAULT FALSE,
-                file_url VARCHAR(2048),
+                file_url VARCHAR(2048)
             );
         """).format(
             sql.Identifier(table_name), sql.Identifier(series_table), sql.Identifier(table_name),

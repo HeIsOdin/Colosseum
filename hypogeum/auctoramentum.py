@@ -78,7 +78,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
 
         challenges_query = sql.SQL("""
             SELECT c.cid, c.title, c.description, c.points, c.category, c.difficulty, c.prerequisite,
-                    c.requires_instance, c.file_url,
+                    c.requires_instance, c.file_url, c.author
             COALESCE(
                 (
                 SELECT json_agg(
