@@ -127,7 +127,8 @@ def _get_player_data(pid: uuid.UUID) -> tuple[dict, bool, str, int]:
         )
         query = sql.SQL("SELECT {columns} FROM {s_table} " \
                         "LEFT JOIN {c_table} ON {s_table}.cid = {c_table}.cid " \
-                        "WHERE {s_table}.pid = %s").format(
+                        "WHERE {s_table}.pid = %s" \
+                        "ORDER BY {s_table}.solved_at DESC").format(
                             s_table=solves_table,
                             c_table=challenges_table,
                             columns=columns
