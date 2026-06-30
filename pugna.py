@@ -29,7 +29,10 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
             'category', 'difficulty', 'prerequisite', 'flag'
         ]
         normalized_challenge = {k:v for k,v in challenge.items() if k in columns and v is not None}
-        normalized_challenge['flag'] = flag_hash(normalized_challenge["flag"])
+        flag = normalized_challenge.get("flag")
+        if not flag:
+            raise ValueError("Flag is required for challenge creation.")
+        normalized_challenge['flag'] = flag_hash(flag)
         normalized_challenge['sid'] = sid
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         columns = sql.SQL(', ').join(
