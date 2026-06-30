@@ -1,4 +1,3 @@
-from __init__ import REDIS_CLIENT
 import os
 import json
 import redis
@@ -53,40 +52,50 @@ def env(keys: str, defaults: str = '', delimiter: str = ",") -> tuple[str, ...]:
 
     return tuple(values)
 
-def refresh_series_and_challenges():
+def refresh_series_and_challenges(redis_client: redis.Redis) -> None:
     """
     Retrieve the series and challenges from the database.
 
     """
-    table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
-    query = sql.SQL("SELECT sid, cid FROM {table}").format(table=table)
     SIDS_AND_CIDS: dict = {"sids": {}}
+    series_table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
+    challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
+    series_query = sql.SQL("SELECT sid FROM {table}").format(table=series_table)
+    challenges_query = sql.SQL("SELECT sid, cid FROM {table}").format(table=challenges_table)
+    
     with db_connect() as conn:
         with conn.cursor() as cursor:
-                cursor.execute(query)
+                cursor.execute(series_query)
+                rows = cursor.fetchall()
+                for row in rows: SIDS_AND_CIDS["sids"][row[0]] = {"cids": {}}
+                cursor.execute(challenges_query)
                 rows = cursor.fetchall()
                 for row in rows:
                     sid, cid = row
-                    if sid not in SIDS_AND_CIDS["sids"]:
-                        SIDS_AND_CIDS["sids"][sid] = {"cids": {}}
-                    if cid not in SIDS_AND_CIDS["sids"][sid]["cids"]:
+                    if sid in SIDS_AND_CIDS["sids"]:
                         SIDS_AND_CIDS["sids"][sid]["cids"][cid] = {}
+                    else:
+                        SIDS_AND_CIDS["sids"][sid] = {"cids": {cid: {}}}
     key_prefix = env('REDIS_KEY_PREFIX')[0]
-    REDIS_CLIENT.set(f"{key_prefix}:series_and_challenges", json.dumps(SIDS_AND_CIDS))
+    redis_client.set(f"{key_prefix}:series_and_challenges", json.dumps(SIDS_AND_CIDS))
 
-def raise_on_missing_series_and_challenges(sid: int, cid: int | None = None) -> None:
+def raise_on_missing_series_and_challenges(redis_client: redis.Redis, sid_str: int,
+                                           cid_str: int | None = None) -> None:
     """
     Raise an exception if the series and challenges data is missing in Redis.
     """
     key_prefix = env('REDIS_KEY_PREFIX')[0]
+    # NOTE: Redis stores keys as strings, so for comparison, convert sid and cid to strings
+    sid = str(sid_str)
+    cid = str(cid_str) if cid_str is not None else None
     
-    raw = REDIS_CLIENT.get(f"{key_prefix}:series_and_challenges")
+    raw = redis_client.get(f"{key_prefix}:series_and_challenges")
     if not raw: raise Exception("Series and challenges data is missing. Please refresh the data.")
     
     data = json.loads(raw)
     sids = data['sids']
-    if sid not in sids: raise Exception(f"Series {sid} is missing. Please refresh the data.")
+    if sid not in sids: raise Exception(f"Series {sid} is missing. Please refresh the data. {data}")
     
     if cid is None: return  # No challenge ID to check, return early
     cids = sids[sid]["cids"]
-    if cid not in cids: raise Exception(f"Challenge {cid} is missing for Series {sid}. Please refresh the data.")
+    if cid not in cids: raise Exception(f"Challenge {cid} is missing for Series {sid}. Please refresh the data. {data}")
