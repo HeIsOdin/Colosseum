@@ -35,7 +35,7 @@ def health_check():
     Returns:
         JSON response indicating the health status of the service.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         table = env('POSTGRESQL_SERIES_TABLE')[0]
         query = sql.SQL("SELECT 1 FROM {table} LIMIT 1").format(table=sql.Identifier(table))
@@ -67,7 +67,7 @@ def _integration_test() -> tuple[dict, bool, str, int]:
     email: str = uuid.uuid4().hex + "@oluwajuwon.dev"
     password: str = uuid.uuid4().hex
 
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         refresh_series_and_challenges(REDIS_CLIENT)
         pid = vomitoria(checklist, checks, email, password)
@@ -109,7 +109,7 @@ def _bootstrap_and_test(data: dict[str, str]) -> tuple[dict, bool, str, int]:
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         superdatabase = data.get("superdatabase")
         if not superdatabase: raise ValueError("Database name is required for bootstrapping.")

@@ -32,7 +32,7 @@ def unauthorized():
 
 @login_manager.user_loader
 def load_user(user_id: str) -> User | None:
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
 
     try:
         pid = uuid.UUID(str(user_id))
@@ -122,7 +122,7 @@ def raise_on_invalid_creds(email: str, password: str):
     Returns:
         bool: True if the credentials are valid, False otherwise.
     """
-    email = email
+    email = email.strip().lower()
     if password != password.strip(): raise ValueError("Password must not contain leading or trailing whitespace.")
     email_pattern = re.compile(
         r"^[a-z0-9!#$%&'*+/=?^_`{|}~-]+"
@@ -153,7 +153,7 @@ def flag_hash(flag: str) -> str:
 # -- Authentication & Profile --
 
 def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     email = email.strip().lower()
 
     try:
@@ -235,7 +235,7 @@ def login():
 @vomitoria_bp.post('/logout')
 @login_required
 def logout():
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         logout_user()
         logger.info("User logged out successfully.")
@@ -253,7 +253,7 @@ def _register(email: str, password: str) -> tuple[bool, str, int]:
         - email (str) : The email of the new user.
         - password (str) : The password of the new user.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     email = email.strip().lower()
     try:
         raise_on_invalid_creds(email, password)
@@ -301,7 +301,7 @@ def integration_test(checklist: list[str], checks: list[bool], email: str, passw
     pid: uuid.UUID | None = None
     checklist.append("User Registration was successful.")
 
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_invalid_creds(email, password)
         success, message, _ = _register(email, password)

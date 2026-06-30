@@ -6,7 +6,7 @@ from hypogeum.armamentarium import (
     as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
 )
 from hypogeum.vomitoria import (
-    flag_hash, series_signup_required, admin_required, flag_hash, cooldown_check
+    flag_hash, series_signup_required, admin_required, cooldown_check
 )
 
 import uuid
@@ -25,7 +25,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         required = {"title", "description", "author", "points", "category", "difficulty", "flag"}
@@ -94,7 +94,7 @@ def _delete_challenge(sid: int, cid: int) -> tuple[bool, str, int]:
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
 
@@ -148,7 +148,7 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
 
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
 
@@ -158,10 +158,10 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[
             return True, "Instance started.", 200
         elif action == "stop":
             logger.info(f"Stopping instance for Series {sid}, Challenge {cid} by Player {pid}.")
-            return True, "Instance  stopped.", 200
+            return True, "Instance stopped.", 200
         elif action == "restart":
             logger.info(f"Restarting instance for Series {sid}, Challenge {cid} by Player {pid}.")
-            return True, "Instance  restarted.", 200
+            return True, "Instance restarted.", 200
         else:
             logger.warning(f"Invalid action '{action}' for Series {sid}, Challenge {cid}.")
             return False, "Invalid action. Use 'start', 'stop', or 'restart'.", 400
@@ -198,7 +198,7 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
 
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         hashed_flag = flag_hash(flag)
 
@@ -281,7 +281,7 @@ def _get_solves(sid: int, cid: int) -> tuple[list, bool, str, int]:
         list: A list of dictionaries, each representing a submission.
     """
 
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
         solves_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
@@ -343,7 +343,7 @@ def _get_submissions(sid: int, cid: int, pid: uuid.UUID) -> tuple[list, bool, st
         list: A list of dictionaries, each representing a submission.
     """
 
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
         submissions_table = sql.Identifier(env('POSTGRESQL_SUBMISSIONS_TABLE')[0])
@@ -405,7 +405,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
         - cid (int) : The ID of the challenge.
         - pid (uuid.UUID) : The ID of the player.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
 
     challenge_data = {
         "title": "Test",
@@ -497,7 +497,7 @@ def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int,
         sid (int): The series ID to clean up.
         cid (int): The challenge ID to clean up.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     checklist.append("Cleanup of Test Challenge was successful.")
     try:
         success, message, _ = _delete_challenge(sid, cid)

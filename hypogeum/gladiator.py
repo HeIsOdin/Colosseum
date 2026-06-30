@@ -10,7 +10,7 @@ import psycopg2.sql as sql
 gladiator_bp = Blueprint('gladiator', __name__, url_prefix='/players')
 
 def _delete(pid: uuid.UUID):
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE pid = %s").format(table=table)
@@ -57,7 +57,7 @@ def raise_on_invalid_profile(profile: dict[str, str|None]) -> None:
         raise ValueError("Only 'display_name' and 'avatar' are allowed as profile fields.")
 
 def _update_profile(pid: uuid.UUID, **profile):
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_invalid_profile(profile)
         # NOTE: raise_on_invalid_profile only allows display_name and avatar so unpacking is safe
@@ -105,7 +105,7 @@ def _get_player_data(pid: uuid.UUID) -> tuple[dict, bool, str, int]:
     Returns:
         dict: A dictionary representing the player data
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         players_table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
         solves_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
@@ -174,7 +174,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID) -
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     checklist.append("Player Data Retrieval was successful.")
     try:
         player_data, success, message, _ = _get_player_data(pid)
@@ -221,7 +221,7 @@ def integration_test_cleanup(checklist: list[str], checks: list[bool], pid: uuid
         checks (list): A list to append boolean values indicating the success of each check.
         pid (uuid.UUID): The player ID to clean up.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     checklist.append("Cleanup of Test User was successful.")
     try:
         success, message, _ = _delete(pid)

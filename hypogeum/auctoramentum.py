@@ -20,7 +20,7 @@ def _get_series_list(offset: int = 0, limit: int = 10) -> tuple[list, bool, str,
     Returns:
         list: A list of dictionaries, each representing a series.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
@@ -62,7 +62,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
     Returns:
         tuple[dict, bool, str, int]: series data, success flag, message, status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
 
@@ -144,7 +144,7 @@ def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
     Returns:
         dict: A dictionary representing the series overview
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
@@ -194,7 +194,7 @@ def _create_series(title: str, description: str, starts_at_str: str,
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         starts_at = datetime.fromisoformat(starts_at_str)
         ends_at = datetime.fromisoformat(ends_at_str) if ends_at_str else None
@@ -246,7 +246,7 @@ def _delete_series(sid: int) -> tuple[bool, str, int]:
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
@@ -284,7 +284,7 @@ def _join_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
@@ -322,7 +322,7 @@ def _leave_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
@@ -361,7 +361,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID,) 
         - cid (int) : The ID of the challenge.
         - pid (str) : The ID of the player.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
 
     sid: int | None = None
     series_data = {
@@ -471,7 +471,7 @@ def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int,
     Args:
         - sid (int) : The ID of the series to delete.
     """
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     checklist.append("Series Deletion was successful.")
     try:
         if sid is None: raise ValueError("Series ID is None, cannot delete series.")

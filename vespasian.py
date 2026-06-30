@@ -275,7 +275,7 @@ def _create_update_at_trigger(cursor):
         )
 
 def bootstrap(SUPERDATABASE: str, SUPERUSER: str, SUPERPASSWORD: str, REDISPASSWORD: str) -> None:
-    logger = logging.getLogger(NAME)
+    logger = logging.getLogger(__name__)
     HOST, PORT = env('POSTGRESQL_HOST,POSTGRESQL_PORT', 'localhost,5432')
     REDIS_HOST = env('REDIS_HOST', 'localhost:6379')[0]
     
