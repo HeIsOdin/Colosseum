@@ -24,16 +24,17 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
     logger = logging.getLogger(NAME)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
-        columns = [
-            'title', 'description', 'author', 'points',
-            'category', 'difficulty', 'prerequisite', 'flag'
-        ]
-        normalized_challenge = {k:v for k,v in challenge.items() if k in columns and v is not None}
-        flag = normalized_challenge.get("flag")
-        if not flag:
-            raise ValueError("Flag is required for challenge creation.")
-        normalized_challenge['flag'] = flag_hash(flag)
+        columns = ["title", "description", "author", "points", "category", "difficulty", "flag"]
+        missing = [field for field in columns if not challenge.get(field)]
+
+        if missing:
+            return "", False, f"Missing required fields: {', '.join(missing)}", 400
+        
+        normalized_challenge = {k:v for k,v in challenge.items()}
+        normalized_challenge['flag'] = flag_hash(normalized_challenge['flag'])
+        normalized_challenge['points'] = int(normalized_challenge['points'])
         normalized_challenge['sid'] = sid
+        
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col) for col in normalized_challenge.keys()
