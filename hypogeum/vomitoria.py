@@ -1,10 +1,10 @@
-from . import login_manager
+from . import login_manager, REDIS_CLIENT
 from flask import Blueprint, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user, UserMixin
 from datetime import timedelta
 from functools import wraps
 from time import time
-from hypogeum.armamentarium import env, db_connect, redis_connect, as_uuid
+from hypogeum.armamentarium import env, db_connect, as_uuid
 
 import re
 import hmac
@@ -93,7 +93,7 @@ def cooldown_check(key_func, seconds=5):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            r = redis_connect()
+            r = REDIS_CLIENT
             
             key = f"colosseum:cooldown:{key_func()}"
             last_submission = r.get(key)
