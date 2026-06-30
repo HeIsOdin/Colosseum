@@ -196,7 +196,7 @@ def _create_challenge_solves_table(cursor: psycopg2.extensions.cursor) -> None:
                 subid BIGINT REFERENCES {}(subid) ON DELETE CASCADE,
                 solved_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 points INTEGER NOT NULL,
-                PRIMARY KEY (sid, pid, cid, subid)
+                PRIMARY KEY (sid, pid, cid)
             );
         """).format(
             sql.Identifier(table_name),
