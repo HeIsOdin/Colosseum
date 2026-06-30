@@ -43,9 +43,27 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
         normalized_challenge = {k: v for k, v in challenge.items() if k in allowed and v is not None}
         normalized_challenge['flag'] = flag_hash(normalized_challenge['flag'])
         normalized_challenge['points'] = int(normalized_challenge['points'])
+        if normalized_challenge['points'] < 0:
+            return "", False, "Points must be a non-negative integer.", 400
         normalized_challenge['sid'] = sid
 
+        prerequisite = normalized_challenge.get("prerequisite")
+
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
+        if prerequisite is not None:
+            prerequisite = int(prerequisite)
+
+            prereq_query = sql.SQL("SELECT 1 FROM {table} WHERE sid = %s AND cid = %s LIMIT 1"
+                                   ).format(table=challenges_table)
+
+            with db_connect() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(prereq_query, (sid, prerequisite))
+                    if cursor.fetchone() is None:
+                        return "", False, "Prerequisite challenge must exist in the same series.", 400
+
+            normalized_challenge["prerequisite"] = prerequisite
+        
         columns = sql.SQL(', ').join(
             sql.Identifier(col) for col in normalized_challenge.keys()
         )
@@ -235,7 +253,7 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
                 if res is None: raise Exception("Failed to record submission.")
                 submission_count_per_minute = int(res[0])
                 standard_limit_per_minute = int(env('COLOSSEUM_SUBMISSION_LIMIT_PER_MIN', '10')[0])
-                if submission_count_per_minute > standard_limit_per_minute:
+                if submission_count_per_minute >= standard_limit_per_minute:
                     return False, f"You are submitting too many flags", 429
                 cursor.execute(insert_submission_query, (sid, cid, pid))
                 res = cursor.fetchone()
