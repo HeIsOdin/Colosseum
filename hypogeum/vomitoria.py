@@ -3,7 +3,6 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user, UserMixin
 from datetime import timedelta
 from functools import wraps
-from time import time
 from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import env, db_connect, as_uuid
 
@@ -286,7 +285,7 @@ def identify():
     if not success:
         return jsonify({"success": False, "message": message}), status_code
 
-    return jsonify({"success": True, "details": details}), status_code
+    return jsonify({"success": True, **details}), status_code
 
 def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
     logger = logging.getLogger(__name__)
