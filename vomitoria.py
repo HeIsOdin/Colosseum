@@ -36,14 +36,23 @@ def load_user(user_id: uuid.UUID) -> User | None:
     try:
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                table = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
-                query = sql.SQL("SELECT pid, sids FROM {table} WHERE pid = %s").format(table=table)
+                user_table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
+                query = sql.SQL("SELECT is_admin FROM {table} WHERE pid = %s").format(
+                    table=user_table
+                )
                 cursor.execute(query, (user_id,))
                 result = cursor.fetchone()
                 if result is None:
                     return None
-                user_id, sids = result
-        return User(user_id, sids)
+                is_admin = bool(result[0])
+                sids_table = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
+                query = sql.SQL("SELECT sid FROM {table} WHERE pid = %s").format(
+                    table=sids_table
+                )
+                cursor.execute(query, (user_id,))
+                rows = cursor.fetchall()
+                sids = [row[0] for row in rows]
+        return User(user_id, sids, is_admin)
     except Exception as e:
         logger.exception(f"Error loading user {user_id}: {e}")
         return None
