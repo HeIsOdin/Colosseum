@@ -241,7 +241,7 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
         )
     )
 
-def _create_update_at_trigger(cursor):
+def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
     table_names = [
         env("POSTGRESQL_USER_TABLE")[0],
         env("POSTGRESQL_INSTANCES_TABLE")[0],
@@ -276,6 +276,30 @@ def _create_update_at_trigger(cursor):
             )
         )
 
+def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
+    # Create indexes for the tables to improve query performance
+    memberships_table = env('POSTGRESQL_MEMBERSHIPS_TABLE')[0]
+    submissions_table = env('POSTGRESQL_SUBMISSIONS_TABLE')[0]
+    solves_table = env('POSTGRESQL_SOLVES_TABLE')[0]
+
+    cursor.execute(
+        sql.SQL("""
+            CREATE INDEX IF NOT EXISTS idx_submissions_sid_cid_pid_submitted_at
+            ON {} (sid, cid, pid, submitted_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_solves_sid_cid ON {} (sid, cid);
+
+            CREATE INDEX IF NOT EXISTS idx_solves_pid ON {} (pid);
+
+            CREATE INDEX IF NOT EXISTS idx_memberships_pid ON {} (pid);
+        """).format(
+            sql.Identifier(submissions_table),
+            sql.Identifier(solves_table),
+            sql.Identifier(solves_table),
+            sql.Identifier(memberships_table)
+        )
+    )
+
 def bootstrap(SUPERDATABASE: str, SUPERUSER: str, SUPERPASSWORD: str, REDISPASSWORD: str) -> None:
     logger = logging.getLogger(__name__)
     HOST, PORT = env('POSTGRESQL_HOST,POSTGRESQL_PORT', 'localhost,5432')
@@ -294,21 +318,23 @@ def bootstrap(SUPERDATABASE: str, SUPERUSER: str, SUPERPASSWORD: str, REDISPASSW
         logger.debug(f"Privileges granted to user '{ADMIN}' on database '{DATABASE}'.")
         with conn.cursor() as cursor:
             _create_series_table(cursor)
-            logger.debug(f"Series table _created successfully in database '{DATABASE}'.")
+            logger.debug(f"Series table created successfully in database '{DATABASE}'.")
             _create_challenges_table(cursor)
-            logger.debug(f"Challenges table _created successfully in database '{DATABASE}'.")
+            logger.debug(f"Challenges table created successfully in database '{DATABASE}'.")
             _create_user_table(cursor)
-            logger.debug(f"User table _created successfully in database '{DATABASE}'.")
+            logger.debug(f"User table created successfully in database '{DATABASE}'.")
             _create_memberships_table(cursor)
-            logger.debug(f"Memberships table _created successfully in database '{DATABASE}'.")
+            logger.debug(f"Memberships table created successfully in database '{DATABASE}'.")
             _create_flag_submissions_table(cursor)
-            logger.debug(f"Flag submissions table _created successfully in database '{DATABASE}'.")
+            logger.debug(f"Flag submissions table created successfully in database '{DATABASE}'.")
             _create_challenge_solves_table(cursor)
-            logger.debug(f"Challenge solves table _created successfully in database '{DATABASE}'.")
+            logger.debug(f"Challenge solves table created successfully in database '{DATABASE}'.")
             _create_instances_table(cursor)
-            logger.debug(f"Instances table _created successfully in database '{DATABASE}'.")
+            logger.debug(f"Instances table created successfully in database '{DATABASE}'.")
             _create_update_at_trigger(cursor)
-            logger.debug(f"Update timestamp triggers _created successfully in database '{DATABASE}'.")
+            logger.debug(f"Update timestamp triggers created successfully in database '{DATABASE}'.")
+            _create_indexes(cursor)
+            logger.debug(f"Indexes created successfully in database '{DATABASE}'.")
     
     with db_connect() as conn:
         with conn.cursor() as cursor:
