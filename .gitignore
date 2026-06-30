@@ -181,6 +181,8 @@ venv.bak/
 .env.*.local
 config.ini
 secrets.json
+*.conf
+*.conf.*
 
 # IDEs and Code Editors
 .vscode/
@@ -205,6 +207,3 @@ coverage.xml
 # Log files
 *.log
 pip-log.txt
-
-# Processes
-processes/*
