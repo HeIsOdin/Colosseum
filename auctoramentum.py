@@ -46,7 +46,7 @@ def _get_series_list(offset: int = 0, limit: int = 10) -> tuple[list, bool, str,
 def get_series_list():
     offset = request.args.get('offset', default=0, type=int)
     limit = request.args.get('limit', default=10, type=int)
-    limit = max(min(limit, 10), 20)
+    limit = min(max(limit, 10), 20)
     series_list, success, message, status_code = _get_series_list(offset, limit)
     return jsonify({"success": success, "message": message, "series": series_list}), status_code
 
@@ -107,7 +107,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
                     series_returned_columns = []
                 else:
                     series_returned_columns = [desc[0] for desc in cursor.description]
-                series_data = dict(zip([desc[0] for desc in series_returned_columns], series_row))
+                series_data = dict(zip(series_returned_columns, series_row))
                 cursor.execute(challenges_query, (sid,))
                 challenges_rows = cursor.fetchall()
                 challenges_data = []
@@ -116,7 +116,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
                         challenges_returned_columns = []
                     else:
                         challenges_returned_columns = [desc[0] for desc in cursor.description]
-                    challenges_data.append(dict(zip([desc[0] for desc in challenges_returned_columns], challenge_row)))
+                    challenges_data.append(dict(zip(challenges_returned_columns, challenge_row)))
                 series_data['challenges'] = challenges_data
         return series_data, True, "Series data retrieved successfully.", 200
     except ValueError as ve:
@@ -161,7 +161,7 @@ def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
                     returned_columns = []
                 else:
                     returned_columns = [desc[0] for desc in cursor.description]
-                res = dict(zip([desc[0] for desc in returned_columns], row))
+                res = dict(zip(returned_columns, row))
         return res, True, "Series overview retrieved successfully.", 200
     except ValueError as ve:
         logger.debug(f"Validation error while retrieving overview for Series ID {sid}: {ve}")

@@ -293,7 +293,7 @@ def _get_solves(sid: int, cid: int) -> tuple[list, bool, str, int]:
                         returned_columns = []
                     else:
                         returned_columns = [desc[0] for desc in cursor.description]
-                    res.append(dict(zip([desc[0] for desc in returned_columns], row)))
+                    res.append(dict(zip(returned_columns, row)))
         # Send it raw. Client will handle sorting and filtering
         return res, True, "Solves retrieved successfully.", 200
     except ValueError as ve:
@@ -355,7 +355,7 @@ def _get_submissions(sid: int, cid: int, pid: uuid.UUID) -> tuple[list, bool, st
                         returned_columns = []
                     else:
                         returned_columns = [desc[0] for desc in cursor.description]
-                    res.append(dict(zip([desc[0] for desc in returned_columns], row)))
+                    res.append(dict(zip(returned_columns, row)))
         return res, True, "Submissions retrieved successfully.", 200
     except ValueError as ve:
         logger.debug(f"Validation error while retrieving submissions for Series {sid} and Player {pid}: {ve}")

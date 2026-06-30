@@ -141,7 +141,7 @@ def _get_player_data(pid: uuid.UUID) -> tuple[dict, bool, str, int]:
                     player_returned_columns = []
                 else:
                     player_returned_columns = [desc[0] for desc in cursor.description]
-                player_data = dict(zip([desc[0] for desc in player_returned_columns], player_row))
+                player_data = dict(zip(player_returned_columns, player_row))
                 cursor.execute(query, (pid,))
                 solves_rows = cursor.fetchall()
                 solves_data = []
@@ -150,7 +150,7 @@ def _get_player_data(pid: uuid.UUID) -> tuple[dict, bool, str, int]:
                         solves_returned_columns = []
                     else:
                         solves_returned_columns = [desc[0] for desc in cursor.description]
-                    solves_data.append(dict(zip([desc[0] for desc in solves_returned_columns], solve_row)))
+                    solves_data.append(dict(zip(solves_returned_columns, solve_row)))
                 player_data['solves'] = solves_data
         return player_data, True, "Player data retrieved successfully.", 200
     except Exception as e:
