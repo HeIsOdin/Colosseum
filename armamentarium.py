@@ -1,7 +1,32 @@
+from __init__ import REDIS_CLIENT
 import os
-import re
+import json
+import redis
+import psycopg2
+import psycopg2.sql as sql
 
-def env(vars: str, defaults: str = '', delimiter: str = ",") -> tuple[str, ...]:
+def db_connect() -> psycopg2.extensions.connection:
+    db = {
+        'dbname': env('POSTGRESQL_DBNAME')[0],
+        'user': env('POSTGRESQL_USER')[0],
+        'password': env('POSTGRESQL_PASSWD')[0],
+        'host': env('POSTGRESQL_HOST', 'localhost')[0],
+        'port': int(env('POSTGRESQL_PORT', '5432')[0]),
+    }
+    return psycopg2.connect(**db)
+
+def redis_connect() -> redis.Redis:
+    """
+    Normalize the Redis URL for Flask-Session configuration.
+    
+    Returns:
+        str: A normalized Redis URL in the format `redis://user:password@host:port/`
+    """
+    host = env('REDIS_HOST', 'localhost:6379')[0]
+    user, passwd = env('REDIS_USER,REDIS_PASSWD')
+    return redis.from_url(f"redis://{user}:{passwd}@{host}/0", decode_responses=True)
+
+def env(keys: str, defaults: str = '', delimiter: str = ",") -> tuple[str, ...]:
     """
     Retrieve environment variables.
 
@@ -14,31 +39,54 @@ def env(vars: str, defaults: str = '', delimiter: str = ",") -> tuple[str, ...]:
         tuple (number of arguments passed): values of environmental variables
     """
     values: list[str] = []
-    l_vars = vars.split(delimiter); l_defaults = defaults.split(delimiter)
-    while len(l_defaults) < len(l_vars): l_defaults.append('') # Pad defaults with empty strings if not enough provided
-    for var, default in zip(l_vars, l_defaults):
-        value = os.getenv(var.strip())
+    l_keys = keys.split(delimiter); l_defaults = defaults.split(delimiter)
+    while len(l_defaults) < len(l_keys): l_defaults.append('') # Pad defaults with empty strings if not enough provided
+    for key, default in zip(l_keys, l_defaults):
+        key = key.strip()
+        if not key: raise ValueError("Environment variable names must not be empty.")
+        value = os.getenv(key)
         if value: values.append(value)
         elif default: values.append(default.strip())
     
-    if len(values) != len(l_vars):
-        raise Exception(f"Some or all values in {vars} not set in environment without defaults.")
+    if len(values) != len(l_keys):
+        raise Exception(f"Some keys in {l_keys} not set in environment without defaults.")
 
     return tuple(values)
-            
-def raise_on_invalid_creds(email: str, password: str):
-    """
-    Check if the provided email and password are valid credentials in the database.
 
-    Args:
-        - email (str) : The email to check.
-        - password (str) : The password to check.
-    Returns:
-        bool: True if the credentials are valid, False otherwise.
+def refresh_series_and_challenges():
     """
-    email = email.strip()
-    password = password.strip()
-    email_pattern = r"^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-    if not email or not password: raise ValueError("Email and password must not be empty.")
-    if len(password) < 8: raise ValueError("Password must be at least 8 characters long.")
-    if not re.match(email_pattern, email): raise ValueError("Invalid email format.")
+    Retrieve the series and challenges from the database.
+
+    """
+    table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
+    query = sql.SQL("SELECT sid, cid FROM {table}").format(table=table)
+    SIDS_AND_CIDS: dict = {"sids": {}}
+    with db_connect() as conn:
+        with conn.cursor() as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+                for row in rows:
+                    sid, cid = row
+                    if sid not in SIDS_AND_CIDS["sids"]:
+                        SIDS_AND_CIDS["sids"][sid] = {"cids": {}}
+                    if cid not in SIDS_AND_CIDS["sids"][sid]["cids"]:
+                        SIDS_AND_CIDS["sids"][sid]["cids"][cid] = {}
+    key_prefix = env('REDIS_KEY_PREFIX')[0]
+    REDIS_CLIENT.set(f"{key_prefix}:series_and_challenges", json.dumps(SIDS_AND_CIDS))
+
+def raise_on_missing_series_and_challenges(sid: int, cid: int | None = None) -> None:
+    """
+    Raise an exception if the series and challenges data is missing in Redis.
+    """
+    key_prefix = env('REDIS_KEY_PREFIX')[0]
+    
+    raw = REDIS_CLIENT.get(f"{key_prefix}:series_and_challenges")
+    if not raw: raise Exception("Series and challenges data is missing. Please refresh the data.")
+    
+    data = json.loads(raw)
+    sids = data['sids']
+    if sid not in sids: raise Exception(f"Series {sid} is missing. Please refresh the data.")
+    
+    if cid is None: return  # No challenge ID to check, return early
+    cids = sids[sid]["cids"]
+    if cid not in cids: raise Exception(f"Challenge {cid} is missing for Series {sid}. Please refresh the data.")
