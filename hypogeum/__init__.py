@@ -4,7 +4,6 @@ from hypogeum.armamentarium import redis_connect
 
 load_dotenv() # remove for prod
 
-NAME = "Hypogeum"
 login_manager = LoginManager()
 REDIS_CLIENT = redis_connect()
 

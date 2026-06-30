@@ -1,4 +1,4 @@
-from . import login_manager, NAME
+from . import login_manager
 from flask import Blueprint, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user, UserMixin
 from datetime import timedelta
@@ -428,5 +428,5 @@ def integration_test(checklist: list[str], checks: list[bool], email: str, passw
             logger.warning(f"User login check failed: {message}")
             checks.append(False)
     except Exception as e:
-        logging.getLogger(NAME).exception(f"Integration test failed: {e}")
+        logger.exception(f"Integration test failed: {e}")
     return pid

@@ -1,4 +1,4 @@
-from . import NAME, REDIS_CLIENT
+from . import REDIS_CLIENT
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
