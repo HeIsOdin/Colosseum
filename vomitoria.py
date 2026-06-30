@@ -31,28 +31,39 @@ def unauthorized():
     }), 401
 
 @login_manager.user_loader
-def load_user(user_id: uuid.UUID) -> User | None:
+def load_user(user_id: str) -> User | None:
     logger = logging.getLogger(NAME)
+
     try:
+        pid = uuid.UUID(str(user_id))
+    except ValueError:
+        return None
+
+    try:
+        users_table = env("POSTGRESQL_USER_TABLE")[0]
+        memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
+
+        query = sql.SQL("""
+            SELECT u.pid, u.is_admin, COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
+            FROM {users} u
+            LEFT JOIN {memberships} m ON u.pid = m.pid
+            WHERE u.pid = %s
+            GROUP BY u.pid, u.is_admin
+        """).format(
+            users=sql.Identifier(users_table),
+            memberships=sql.Identifier(memberships_table),
+        )
+
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                user_table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
-                query = sql.SQL("SELECT is_admin FROM {table} WHERE pid = %s").format(
-                    table=user_table
-                )
-                cursor.execute(query, (user_id,))
-                result = cursor.fetchone()
-                if result is None:
-                    return None
-                is_admin = bool(result[0])
-                sids_table = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
-                query = sql.SQL("SELECT sid FROM {table} WHERE pid = %s").format(
-                    table=sids_table
-                )
-                cursor.execute(query, (user_id,))
-                rows = cursor.fetchall()
-                sids = [row[0] for row in rows]
-        return User(user_id, sids, is_admin)
+                cursor.execute(query, (pid,))
+                row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return User(pid=row[0], is_admin=bool(row[1]), sids=list(row[2] or []))
+
     except Exception as e:
         logger.exception(f"Error loading user {user_id}: {e}")
         return None
