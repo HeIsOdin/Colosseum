@@ -52,73 +52,74 @@ def get_series_list():
 
 def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
     """
-    Retrieve the data for a specific series by its ID.
+    Retrieve the data for a specific series by its ID, including all challenges
+    and their solvers.
 
     Args:
-        - sid (int) : The ID of the series.
+        - sid (int): The ID of the series.
     Returns:
-        dict | None: A dictionary representing the series data, or None if not found.
+        tuple[dict, bool, str, int]: series data, success flag, message, status code.
     """
     logger = logging.getLogger(NAME)
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+
         series_table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         solves_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
         user_table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
-        series_columns = sql.SQL(', ').join(
-                sql.Identifier(series_table.string, col)
-                for col in ['sid', 'title', 'description', 'starts_at', 'ends_at', 'image']
-            )
-        columns = sql.SQL(', ').join([
-                sql.SQL(', ').join(
-                    sql.Identifier(challenges_table.string, col)
-                    for col in ['cid', 'title', 'description', 'points', 'category', 'difficulty']
-                ),
-                sql.SQL(', ').join(
-                    sql.Identifier(solves_table.string, col)
-                    for col in ['pid', 'solved_at']
-                ),
-                sql.SQL(', ').join(
-                    sql.Identifier(user_table.string, col)
-                    for col in ['display_name', 'avatar']
-                )
-            ])
-        series_query = sql.SQL("SELECT {series_columns} FROM {series_table} WHERE sid = %s").format(
-                                series_table=series_table,
-                                series_columns=series_columns
-                            )
-        challenges_query = sql.SQL("SELECT {columns} FROM {c_table}" \
-                                   "LEFT JOIN {s_table} ON {c_table}.cid = {s_table}.cid " \
-                                   "LEFT JOIN {u_table} ON {s_table}.pid = {u_table}.pid " \
-                                   "WHERE {s_table}.sid = %s"
-                                   ).format(
-                                       c_table=challenges_table,
-                                       s_table=solves_table,
-                                       u_table=user_table,
-                                       columns=columns
-                                    )
+
+        series_query = sql.SQL(
+            "SELECT sid, title, description, starts_at, ends_at, image "
+            "FROM {series_table} WHERE sid = %s"
+        ).format(series_table=series_table)
+
+        challenges_query = sql.SQL("""
+            SELECT
+                c.cid, c.title, c.description, c.points, c.category,
+                c.difficulty, c.prerequisite,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'display_name', u.display_name,
+                            'avatar', u.avatar,
+                            'solved_at', s.solved_at
+                        )
+                    ) FILTER (WHERE s.pid IS NOT NULL),
+                    '[]'
+                ) AS solvers
+            FROM {c_table} c
+            LEFT JOIN {s_table} s ON c.cid = s.cid AND s.sid = %s
+            LEFT JOIN {u_table} u ON s.pid = u.pid
+            WHERE c.sid = %s
+            GROUP BY c.cid, c.title, c.description, c.points, c.category,
+                     c.difficulty, c.prerequisite
+        """).format(
+            c_table=challenges_table,
+            s_table=solves_table,
+            u_table=user_table
+        )
+
         with db_connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(series_query, (sid,))
                 series_row = cursor.fetchone()
-                if not series_row: return {}, False, "Series ID not found.", 404
-                if cursor.description is None:
-                    series_returned_columns = []
-                else:
-                    series_returned_columns = [desc[0] for desc in cursor.description]
-                series_data = dict(zip(series_returned_columns, series_row))
-                cursor.execute(challenges_query, (sid,))
+                if not series_row:
+                    return {}, False, "Series ID not found.", 404
+
+                series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                series_data = dict(zip(series_columns, series_row))
+
+                cursor.execute(challenges_query, (sid, sid))
+                challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 challenges_rows = cursor.fetchall()
-                challenges_data = []
-                for challenge_row in challenges_rows:
-                    if cursor.description is None:
-                        challenges_returned_columns = []
-                    else:
-                        challenges_returned_columns = [desc[0] for desc in cursor.description]
-                    challenges_data.append(dict(zip(challenges_returned_columns, challenge_row)))
-                series_data['challenges'] = challenges_data
+
+                series_data['challenges'] = [
+                    dict(zip(challenges_columns, row)) for row in challenges_rows
+                ]
+
         return series_data, True, "Series data retrieved successfully.", 200
+
     except ValueError as ve:
         logger.debug(f"Validation error while retrieving series data for Series ID {sid}: {ve}")
         return {}, False, str(ve), 404
