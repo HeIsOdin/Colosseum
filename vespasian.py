@@ -1,4 +1,4 @@
-from hypogeum import NAME, DIFFICULTY_LEVELS, CATEGORIES, USER_STATUS, REDIS_CLIENT
+from hypogeum import NAME, DIFFICULTY_LEVELS, CATEGORIES, USER_STATUS, REDIS_CLIENT, INSTANCE_STATES
 from dotenv import load_dotenv
 from psycopg2 import sql
 from hypogeum.armamentarium import env, db_connect
@@ -213,7 +213,7 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
     challenges_table = env('POSTGRESQL_CHALLENGES_TABLE')[0]
     player_table = env('POSTGRESQL_USER_TABLE')[0]
     status = sql.SQL(', ').join(
-        sql.Literal(state) for state in ['running', 'stopped', 'restarted', 'exited']
+        sql.Literal(state) for state in INSTANCE_STATES
     )
 
     cursor.execute(
@@ -228,7 +228,7 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
                 status VARCHAR(20) NOT NULL CHECK (status IN ({status})),
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (sid, cid, pid, status)
+                UNIQUE (sid, cid, pid)
             );
         """).format(
             sql.Identifier(table_name),

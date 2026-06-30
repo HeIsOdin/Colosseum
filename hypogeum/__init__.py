@@ -11,3 +11,4 @@ REDIS_CLIENT = redis_connect()
 USER_STATUS = ['active', 'verified', 'suspended', 'banned']
 DIFFICULTY_LEVELS = ['Sanity Check', 'Easy', 'Medium', 'Hard']
 CATEGORIES = ['Warmup', 'Web', 'Crypto', 'Forensics', 'Pwn', 'Misc']
+INSTANCE_STATES = ['starting', 'running', 'stopping', 'stopped', 'exited', 'failed', 'expired']
