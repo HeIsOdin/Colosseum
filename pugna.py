@@ -199,8 +199,8 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
         solve_columns = sql.SQL(', ').join(
             sql.Identifier(col) for col in ['sid', 'cid', 'points']
         )
-        solve_query = sql.SQL("INSERT INTO {insert_table} ({columns}, pid) " \
-                        "SELECT {columns}, %s AS pid FROM {select_table} " \
+        solve_query = sql.SQL("INSERT INTO {insert_table} ({columns}, subid, pid) " \
+                        "SELECT {columns}, %s AS subid, %s AS pid FROM {select_table} " \
                         "WHERE sid = %s AND cid = %s AND flag = %s " \
                         "RETURNING solved_at").format(
                             insert_table=solve_insert_table,
@@ -214,7 +214,9 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
                             """).format(submissions=submit_table)
 
         insert_submission_query = sql.SQL("""INSERT INTO {submissions} (sid, cid, pid)
-                                          VALUES (%s, %s, %s)""").format(submissions=submit_table)
+                                          VALUES (%s, %s, %s)
+                                          RETURNING subid
+                                        """).format(submissions=submit_table)
         
         with db_connect() as conn:
             with conn.cursor() as cursor:
@@ -226,7 +228,10 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
                 if submission_count_per_minute > standard_limit_per_minute:
                     return False, f"You are submitting too many flags", 429
                 cursor.execute(insert_submission_query, (sid, cid, pid))
-                cursor.execute(solve_query, (pid, sid, cid, hashed_flag))
+                res = cursor.fetchone()
+                if res is None: raise Exception("Failed to record submission.")
+                subid = int(res[0])
+                cursor.execute(solve_query, (subid, pid, sid, cid, hashed_flag))
                 res = cursor.fetchall()
                 if not res: return False, "Wrong Flag", 404
                 _control_instance(sid, cid, pid, "stop")
