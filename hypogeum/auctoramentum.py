@@ -52,7 +52,7 @@ def get_series_list():
     series_list, success, message, status_code = _get_series_list(offset, limit)
     return jsonify({"success": success, "message": message, "series": series_list}), status_code
 
-def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
+def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, bool, str, int]:
     """
     Retrieve the data for a specific series by its ID, including all challenges
     and their solvers.
@@ -98,6 +98,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
             GROUP BY c.cid, c.title, c.description, c.points, c.category,
                      c.difficulty, c.prerequisite
             ORDER BY c.points DESC, c.cid ASC
+            OFFSET %s LIMIT %s
         """).format(
             c_table=challenges_table,
             s_table=solves_table,
@@ -114,7 +115,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
                 series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 series_data = dict(zip(series_columns, series_row))
 
-                cursor.execute(challenges_query, (sid, sid))
+                cursor.execute(challenges_query, (sid, sid, offset, limit))
                 challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 challenges_rows = cursor.fetchall()
 
@@ -134,7 +135,10 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
 @auctoramentum_bp.get('/<int:sid>')
 @login_required
 def get_series_data(sid: int):
-    series_data, success, message, status_code = _get_series_data(sid)
+    offset = request.args.get('offset', default=0, type=int)
+    limit = request.args.get('limit', default=10, type=int)
+    limit = min(max(limit, 1), 20)
+    series_data, success, message, status_code = _get_series_data(sid, offset, limit)
     return jsonify({"success": success, "message": message, "series": series_data}), status_code
 
 def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
