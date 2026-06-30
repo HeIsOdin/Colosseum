@@ -1,0 +1,285 @@
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap");
+
+:root {
+  color-scheme: dark;
+  font-family: "Inter", system-ui, sans-serif;
+  background: #080706;
+  color: #f7efe1;
+  --bg: #080706;
+  --panel: rgba(24, 19, 15, 0.82);
+  --panel-strong: rgba(35, 27, 21, 0.96);
+  --line: rgba(196, 139, 72, 0.28);
+  --line-bright: rgba(237, 184, 106, 0.48);
+  --gold: #e8b86b;
+  --gold-soft: #f1d59d;
+  --red: #8e2f25;
+  --green: #6f7c4d;
+  --muted: #b6a894;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(142, 47, 37, 0.24), transparent 28rem),
+    radial-gradient(circle at 82% 2%, rgba(232, 184, 107, 0.12), transparent 22rem),
+    linear-gradient(135deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 14px),
+    #080706;
+}
+
+a { color: inherit; text-decoration: none; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; }
+
+.app-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding-bottom: 72px;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 0;
+  backdrop-filter: blur(18px);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: "Cinzel", serif;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.brand img { width: 38px; height: 38px; }
+
+.navlinks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: var(--muted);
+}
+
+.navlinks a:hover { color: var(--gold-soft); }
+
+.session-box { display: flex; justify-content: flex-end; min-width: 130px; }
+
+.inline-status { display: inline-flex; align-items: center; gap: 8px; }
+
+.hero-grid, .campaign-hero, .auth-layout, .admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: 32px;
+  align-items: center;
+  padding: 72px 0 40px;
+}
+
+.hero-copy h1, .campaign-hero h1, .section-heading h2, .form-card h2, .section-panel h1 {
+  font-family: "Cinzel", serif;
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+.hero-copy h1, .campaign-hero h1 { font-size: clamp(3rem, 8vw, 6.8rem); line-height: 0.92; }
+
+.hero-copy p, .campaign-hero p, .series-card p, .challenge-card p, .dossier-card p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--gold);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.hero-actions, .button-row, .campaign-meta, .challenge-badges, .card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.solid-button, .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 42px;
+  border-radius: 999px;
+  border: 1px solid var(--line-bright);
+  padding: 0 18px;
+  font-weight: 800;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.solid-button {
+  color: #1a120d;
+  background: linear-gradient(135deg, var(--gold), #f0d39b);
+  box-shadow: 0 12px 28px rgba(232, 184, 107, 0.18);
+}
+
+.ghost-button { background: rgba(255,255,255,0.04); color: var(--gold-soft); }
+
+.solid-button:hover, .ghost-button:hover { transform: translateY(-1px); }
+.solid-button:disabled, .ghost-button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
+.small { min-height: 34px; padding: 0 13px; font-size: 0.88rem; }
+
+.hero-art, .join-panel, .dossier-card, .form-card, .section-panel, .challenge-dialog, .notice-card, .profile-card {
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.012)),
+    var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.hero-art {
+  position: relative;
+  min-height: 470px;
+  border-radius: 34px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.hero-art > img:first-child { width: min(92%, 520px); opacity: 0.9; }
+.signal-overlay { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.28; object-fit: cover; }
+
+.section-panel { margin-top: 28px; padding: 28px; border-radius: 30px; }
+.section-panel.narrow { width: min(760px, 100%); }
+.section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.section-heading h2, .form-card h2 { font-size: clamp(1.8rem, 4vw, 3rem); }
+
+.series-grid, .challenge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+
+.series-card, .challenge-card {
+  position: relative;
+  text-align: left;
+  min-height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 18px;
+  background: rgba(255,255,255,0.035);
+  overflow: hidden;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.challenge-card { color: inherit; }
+.series-card:hover, .challenge-card:hover { transform: translateY(-3px); border-color: var(--line-bright); background: rgba(255,255,255,0.06); }
+.series-card-art { height: 148px; margin: -4px -4px 16px; border-radius: 18px; overflow: hidden; background: rgba(0,0,0,0.26); }
+.series-card-art img { width: 100%; height: 100%; object-fit: cover; }
+.series-card h3, .challenge-card h3 { margin: 0 0 8px; font-size: 1.22rem; }
+.card-footer { justify-content: space-between; margin-top: 20px; color: var(--gold-soft); font-size: 0.88rem; }
+
+.campaign-hero { align-items: stretch; }
+.campaign-meta span, .challenge-badges span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--gold-soft);
+  background: rgba(0,0,0,0.22);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+}
+
+.join-panel { border-radius: 30px; padding: 18px; display: grid; gap: 18px; }
+.join-panel img { width: 100%; border-radius: 22px; }
+
+.challenge-grid { padding-bottom: 30px; }
+.challenge-card.locked { opacity: 0.72; }
+.challenge-card.solved { border-color: rgba(129, 168, 99, 0.62); }
+.challenge-topline { display: flex; align-items: center; justify-content: space-between; color: var(--gold); font-family: "JetBrains Mono", monospace; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.1em; }
+.challenge-badges.wide { margin: 14px 0; }
+
+.dialog-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.72); backdrop-filter: blur(10px); }
+.challenge-dialog {
+  position: fixed;
+  z-index: 50;
+  top: 50%;
+  left: 50%;
+  width: min(760px, calc(100% - 28px));
+  max-height: min(82vh, 850px);
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  border-radius: 28px;
+  padding: 24px;
+}
+.dialog-header { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.dialog-header h2 { margin: 0; font-size: clamp(1.6rem, 4vw, 2.6rem); font-family: "Cinzel", serif; }
+.challenge-body p { color: var(--muted); line-height: 1.7; }
+
+.locked-panel, .download-panel, .instance-panel {
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(0,0,0,0.22);
+}
+.locked-panel, .download-panel, .instance-panel h4 { display: flex; align-items: center; gap: 10px; }
+.download-panel { color: var(--gold-soft); }
+.instance-panel h4 { margin: 0 0 12px; }
+
+.auth-layout { align-items: stretch; }
+.dossier-card { border-radius: 30px; padding: 34px; min-height: 420px; background-image: linear-gradient(rgba(10,8,7,0.65), rgba(10,8,7,0.72)), url("./assets/biafra-dossier.svg"); background-size: cover; background-position: center; }
+.dossier-card h1 { font-family: "Cinzel", serif; font-size: clamp(2.4rem, 6vw, 4.8rem); line-height: 0.95; }
+
+.form-card { border-radius: 28px; padding: 24px; display: grid; gap: 16px; align-content: start; }
+.form-card label, .flag-form label { display: grid; gap: 8px; color: var(--gold-soft); font-weight: 700; }
+input, textarea, select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 13px;
+  color: #fff4df;
+  background: rgba(0,0,0,0.26);
+  outline: none;
+}
+textarea { min-height: 112px; resize: vertical; }
+input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(232, 184, 107, 0.13); }
+.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 6px; border: 1px solid var(--line); border-radius: 999px; background: rgba(0,0,0,0.22); }
+.segmented button { border: 0; border-radius: 999px; padding: 10px; background: transparent; color: var(--muted); font-weight: 800; }
+.segmented button.active { background: rgba(232, 184, 107, 0.16); color: var(--gold-soft); }
+.form-error { color: #ffb4a7; }
+.form-success { color: #cbe6a4; }
+.muted { color: var(--muted); }
+.spin { animation: spin 1s linear infinite; }
+
+.flag-form { margin-top: 18px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+.profile-card { display: flex; gap: 20px; align-items: center; border-radius: 24px; padding: 20px; margin-top: 20px; }
+.profile-card h2 { margin: 0; }
+.admin-grid { align-items: start; }
+.split-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.checkbox-line { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 10px !important; }
+.checkbox-line input { width: auto; }
+.notice-card { display: inline-flex; align-items: center; gap: 10px; border-radius: 18px; padding: 14px 16px; color: var(--gold-soft); }
+.notice-card.error { color: #ffb4a7; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+  .hero-grid, .campaign-hero, .auth-layout, .admin-grid { grid-template-columns: 1fr; padding-top: 36px; }
+  .series-grid, .challenge-grid { grid-template-columns: 1fr; }
+  .navlinks { display: none; }
+  .flag-form { grid-template-columns: 1fr; }
+  .topbar { align-items: flex-start; }
+}
