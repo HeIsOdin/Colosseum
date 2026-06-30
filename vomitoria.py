@@ -151,56 +151,54 @@ def flag_hash(flag: str) -> str:
 # -- Authentication & Profile --
 
 def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
-    """
-    Attempt to log in a user with the provided email and password.
-
-    Args:
-        - email (str) : The email of the user.
-        - password (str) : The password of the user.
-    Returns:
-        tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
-    """
     logger = logging.getLogger(NAME)
     email = email.strip().lower()
-    
+
     try:
-        users_table = env('POSTGRESQL_USER_TABLE')[0]
-        memberships_table = env('POSTGRESQL_MEMBERSHIPS_TABLE')[0]
-        columns = sql.SQL(', ').join([
-            sql.SQL(', ').join([
-                sql.Identifier(users_table, col)
-                for col in ['pid', 'password', 'is_admin', 'status']
-            ]),
-            sql.SQL(', ').join([
-                sql.Identifier(memberships_table, col)
-                for col in ['sid']
-            ])
-        ])
         raise_on_invalid_creds(email, password)
-        query = sql.SQL("SELECT {columns} FROM {u_table} " \
-                        "LEFT JOIN {m_table} ON {u_table}.pid = {m_table}.pid " \
-                        "WHERE email = %s"
-                        ).format(
-                            u_table=sql.Identifier(users_table),
-                            m_table=sql.Identifier(memberships_table),
-                            columns=columns
-                        )
+
+        users_table = env("POSTGRESQL_USER_TABLE")[0]
+        memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
+
+        query = sql.SQL("""
+            SELECT u.pid, u.password, u.is_admin, u.status,
+            COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
+            FROM {users} u
+            LEFT JOIN {memberships} m ON u.pid = m.pid
+            WHERE u.email = %s
+            GROUP BY u.pid, u.password, u.is_admin, u.status
+        """).format(
+            users=sql.Identifier(users_table),
+            memberships=sql.Identifier(memberships_table),
+        )
+
         with db_connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, (email,))
-                res = cursor.fetchone()
-                if not res:
-                    return {}, False, "Invalid credentials", 401
-                if res[3] not in ['active', 'verified']:
-                    return {}, False, f"User status is '{res[3]}', cannot log in.", 403
-                actual_password = res[1]
-                if actual_password is None: return {}, False, "Invalid credentials", 401
-                if bcrypt.checkpw(password.encode('utf-8'), str(actual_password).encode('utf-8')):
-                    return {
-                        'pid': res[0], 'sids': list(res[3] or []), 'is_admin': bool(res[2])
-                        }, True, "", 200
-                else:
-                    return {}, False, "Invalid credentials", 401
+                row = cursor.fetchone()
+
+        if row is None:
+            return {}, False, "Invalid credentials", 401
+
+        pid, password_hash, is_admin, status, sids = row
+
+        if status not in ["active", "verified"]:
+            return {}, False, f"User status is '{status}', cannot log in.", 403
+
+        if password_hash is None:
+            return {}, False, "Invalid credentials", 401
+
+        if not bcrypt.checkpw(password.encode("utf-8"), str(password_hash).encode("utf-8")):
+            return {}, False, "Invalid credentials", 401
+
+        return {
+            "pid": str(pid),
+            "sids": list(sids or []),
+            "is_admin": bool(is_admin),
+        }, True, "", 200
+
+    except ValueError as ve:
+        return {}, False, str(ve), 400
     except Exception as e:
         logger.exception(f"Error during login for user {email}: {e}")
         return {}, False, "Internal server error", 500
