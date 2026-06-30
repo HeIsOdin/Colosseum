@@ -272,14 +272,25 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
         solve_columns = sql.SQL(', ').join(
             sql.Identifier(col) for col in ['sid', 'cid', 'points']
         )
-        solve_query = sql.SQL("INSERT INTO {insert_table} ({columns}, subid, pid) " \
-                        "SELECT {columns}, %s AS subid, %s AS pid FROM {select_table} " \
-                        "WHERE sid = %s AND cid = %s AND flag = %s " \
-                        "RETURNING solved_at").format(
-                            insert_table=solve_insert_table,
-                            select_table=solve_select_table,
-                            columns=solve_columns
-                        )
+        solve_query = sql.SQL("""
+            WITH matched_challenge AS (
+                SELECT sid, cid, points, requires_instance
+                FROM {select_table}
+                WHERE sid = %s AND cid = %s AND flag = %s
+            ),
+            inserted_solve AS (
+                INSERT INTO {insert_table} (sid, cid, points, subid, pid)
+                SELECT sid, cid, points, %s AS subid, %s AS pid
+                FROM matched_challenge
+                RETURNING solved_at
+            )
+            SELECT inserted_solve.solved_at, matched_challenge.requires_instance
+            FROM inserted_solve
+            JOIN matched_challenge ON TRUE
+        """).format(
+            insert_table=solve_insert_table,
+            select_table=solve_select_table,
+        )
         submit_table = sql.Identifier(env('POSTGRESQL_SUBMISSIONS_TABLE')[0])
 
         insert_submission_query = sql.SQL("""INSERT INTO {submissions} (sid, cid, pid)
@@ -293,10 +304,17 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
                 res = cursor.fetchone()
                 if res is None: raise Exception("Failed to record submission.")
                 subid = int(res[0])
-                cursor.execute(solve_query, (subid, pid, sid, cid, hashed_flag))
-                res = cursor.fetchall()
-                if not res: return False, "Wrong Flag", 404
-                _control_instance(sid, cid, pid, "stop")
+                cursor.execute(solve_query, (sid, cid, hashed_flag, subid, pid))
+                res = cursor.fetchone()
+
+                if not res:
+                    return False, "Wrong Flag", 404
+
+                _solved_at, requires_instance = res
+
+                if requires_instance:
+                    _control_instance(sid, cid, pid, "stop")
+
                 return True, "Correct Flag", 200
     except ValueError as ve:
         logger.debug(f"Validation error in submitting flag: {ve}")
