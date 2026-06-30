@@ -34,7 +34,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
         normalized_challenge['flag'] = flag_hash(normalized_challenge['flag'])
         normalized_challenge['points'] = int(normalized_challenge['points'])
         normalized_challenge['sid'] = sid
-        
+
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col) for col in normalized_challenge.keys()
@@ -148,10 +148,10 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[
             return True, "Instance started.", 200
         elif action == "stop":
             logger.info(f"Stopping instance for Series {sid}, Challenge {cid} by Player {pid}.")
-            return True, "Instance started.", 200
+            return True, "Instance  stopped.", 200
         elif action == "restart":
             logger.info(f"Restarting instance for Series {sid}, Challenge {cid} by Player {pid}.")
-            return True, "Instance started.", 200
+            return True, "Instance  restarted.", 200
         else:
             logger.warning(f"Invalid action '{action}' for Series {sid}, Challenge {cid}.")
             return False, "Invalid action. Use 'start', 'stop', or 'restart'.", 400
