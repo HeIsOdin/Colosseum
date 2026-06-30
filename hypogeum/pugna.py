@@ -192,8 +192,21 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[
 
     logger = logging.getLogger(__name__)
     try:
+        challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
-
+        require_instance_query = sql.SQL("SELECT requires_instance FROM {table}" \
+                                         "WHERE sid = %s AND cid = %s").format(
+                                            table=challenges_table
+                                        )
+        with db_connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(require_instance_query, (sid, cid))
+                res = cursor.fetchone()
+                if not res:
+                    return False, f"Challenge {cid} not found in Series {sid}.", 404
+                requires_instance = res[0]
+                if not requires_instance:
+                    return False, f"Challenge {cid} does not require an instance.", 400
         action = action.lower()
         if action == "start":
             logger.info(f"Starting instance for Series {sid}, Challenge {cid} by Player {pid}.")
