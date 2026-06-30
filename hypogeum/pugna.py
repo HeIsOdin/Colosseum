@@ -174,7 +174,6 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[
 
 @pugna_bp.patch('/<int:cid>')
 @login_required
-@series_signup_required
 @locked_challenge_check
 def control_challenge_instance(sid: int, cid: int):  
     data = request.get_json(silent=True)
@@ -260,9 +259,8 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
 
 @pugna_bp.post('/<int:cid>')
 @login_required
-@cooldown_check(lambda: current_user.id, seconds=10)
-@series_signup_required
 @locked_challenge_check
+@cooldown_check(lambda: current_user.id, seconds=10)
 def submit_flag(sid: int, cid: int):
     data = request.get_json(silent=True)
     if data is None:

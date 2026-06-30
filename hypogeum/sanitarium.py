@@ -1,6 +1,6 @@
 from . import REDIS_CLIENT
 from flask import Blueprint, jsonify
-from hypogeum.vomitoria import integration_test as vomitoria, admin_required
+from hypogeum.vomitoria import integration_test as vomitoria, admin_required, login_required
 from hypogeum.gladiator import (
     integration_test as gladiator, integration_test_cleanup as pid_cleanup
 )
@@ -90,6 +90,7 @@ def _integration_test() -> tuple[dict, bool, str, int]:
         return {"checklist": checklist, "checks": checks}, False, "Internal Server Error", 500
 
 @sanitarium_bp.get('/integration-test')
+#@login_required
 #@admin_required
 def integration_test():
     """
