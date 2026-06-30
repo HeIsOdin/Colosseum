@@ -111,7 +111,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
                 series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 series_data = dict(zip(series_columns, series_row))
 
-                cursor.execute(challenges_query, (sid, sid, offset, limit))
+                cursor.execute(challenges_query, (sid, limit, offset, sid))
                 challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 challenges_rows = cursor.fetchall()
 
