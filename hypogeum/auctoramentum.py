@@ -94,6 +94,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
             LEFT JOIN {s_table} s ON c.cid = s.cid AND s.sid = %s
             LEFT JOIN {u_table} u ON s.pid = u.pid
             WHERE c.sid = %s
+            ORDER BY c.points DESC, c.cid ASC
             GROUP BY c.cid, c.title, c.description, c.points, c.category,
                      c.difficulty, c.prerequisite
         """).format(
