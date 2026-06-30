@@ -1,7 +1,7 @@
-from __init__ import NAME, DIFFICULTY_LEVELS, CATEGORIES, USER_STATUS, REDIS_CLIENT
+from hypogeum import NAME, DIFFICULTY_LEVELS, CATEGORIES, USER_STATUS, REDIS_CLIENT
 from dotenv import load_dotenv
 from psycopg2 import sql
-from armamentarium import env, db_connect
+from hypogeum.armamentarium import env, db_connect
 
 import redis
 import getpass

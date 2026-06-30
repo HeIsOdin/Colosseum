@@ -1,11 +1,15 @@
-from __init__ import NAME, REDIS_CLIENT
-from flask import Blueprint, jsonify, current_app, request
-from vomitoria import integration_test as vomitoria, admin_required
-from gladiator import integration_test as gladiator, integration_test_cleanup as pid_cleanup
-from auctoramentum import integration_test as auctoramentum, integration_test_cleanup as sid_cleanup
-from pugna import integration_test as pugna, integration_test_cleanup as cid_cleanup
+from . import NAME, REDIS_CLIENT
+from flask import Blueprint, jsonify, request
+from hypogeum.vomitoria import integration_test as vomitoria, admin_required
+from hypogeum.gladiator import (
+    integration_test as gladiator, integration_test_cleanup as pid_cleanup
+)
+from hypogeum.auctoramentum import (
+    integration_test as auctoramentum, integration_test_cleanup as sid_cleanup
+)
+from hypogeum.pugna import integration_test as pugna, integration_test_cleanup as cid_cleanup
 from vespasian import bootstrap
-from armamentarium import env, db_connect, refresh_series_and_challenges
+from hypogeum.armamentarium import env, db_connect, refresh_series_and_challenges
 
 import uuid
 import logging

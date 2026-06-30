@@ -1,9 +1,13 @@
-from __init__ import NAME, REDIS_CLIENT
+from . import NAME, REDIS_CLIENT
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
-from armamentarium import env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
-from vomitoria import flag_hash, series_signup_required, admin_required, flag_hash, cooldown_check
+from hypogeum.armamentarium import (
+    env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+)
+from hypogeum.vomitoria import (
+    flag_hash, series_signup_required, admin_required, flag_hash, cooldown_check
+)
 
 import uuid
 import logging
@@ -401,7 +405,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
         "title": "Test",
         "description": "This is a test challenge for integration testing.",
         "author": "Integration Test",
-        "points": 0,
+        "points": "0",
         "difficulty": "Sanity Check",
         "category": "Warmup",
         "flag": env('COLOSSEUM_TEST_FLAG', "CTF{f4k3_fl4g_f0r_t3st1ng}")[0]

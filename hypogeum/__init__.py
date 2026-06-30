@@ -1,6 +1,6 @@
 from flask_login import LoginManager
 from dotenv import load_dotenv
-from armamentarium import redis_connect
+from hypogeum.armamentarium import redis_connect
 
 load_dotenv() # remove for prod
 

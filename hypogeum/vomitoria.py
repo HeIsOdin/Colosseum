@@ -1,10 +1,10 @@
-from __init__ import login_manager, NAME
+from . import login_manager, NAME
 from flask import Blueprint, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user, UserMixin
 from datetime import timedelta
 from functools import wraps
 from time import time
-from armamentarium import env, db_connect, redis_connect
+from hypogeum.armamentarium import env, db_connect, redis_connect
 
 import re
 import hmac

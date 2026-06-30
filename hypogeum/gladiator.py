@@ -1,7 +1,7 @@
-from __init__ import NAME
+from . import NAME
 from flask import Blueprint, jsonify, request
 from flask_login import login_required, current_user, logout_user
-from armamentarium import env, db_connect
+from hypogeum.armamentarium import env, db_connect
 
 import uuid
 import logging

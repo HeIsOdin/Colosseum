@@ -1,13 +1,13 @@
-from __init__ import login_manager, REDIS_CLIENT
+from . import login_manager, REDIS_CLIENT
 from flask import Flask
 from flask_session import Session
 from psycopg2 import extras
-from armamentarium import env, refresh_series_and_challenges
-from vomitoria import vomitoria_bp
-from auctoramentum import auctoramentum_bp
-from gladiator import gladiator_bp
-from sanitarium import sanitarium_bp
-from pugna import pugna_bp
+from hypogeum.armamentarium import env, refresh_series_and_challenges
+from hypogeum.vomitoria import vomitoria_bp
+from hypogeum.auctoramentum import auctoramentum_bp
+from hypogeum.gladiator import gladiator_bp
+from hypogeum.sanitarium import sanitarium_bp
+from hypogeum.pugna import pugna_bp
 
 def configure_app(app: Flask) -> None:
     app.config['SECRET_KEY'] = env('COLOSSEUM_SECRET_KEY')[0]

@@ -1,9 +1,11 @@
-from __init__ import NAME, REDIS_CLIENT
+from . import NAME, REDIS_CLIENT
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from datetime import datetime, timedelta
-from vomitoria import admin_required
-from armamentarium import env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+from hypogeum.vomitoria import admin_required
+from hypogeum.armamentarium import (
+    env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+)
 
 import uuid
 import logging
