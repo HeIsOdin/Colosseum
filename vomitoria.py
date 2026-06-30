@@ -216,13 +216,19 @@ def login():
         return jsonify({"success": False, "message": "Email and password are required."}), 400
     
     details, success, message, status_code = _login(email, password)
-    pid = uuid.UUID(details.get("pid"))
-    is_admin = bool(details.get("is_admin", False))
-    sids = list(details.get("sids", []))
-    if success:
-        user = User(pid=pid, sids=sids, is_admin=is_admin)
-        login_user(user, remember=True, duration=timedelta(days=1))
-    return jsonify({"success": success, "message": message}), status_code
+
+    if not success:
+        return jsonify({"success": False, "message": message}), status_code
+
+    pid = uuid.UUID(str(details["pid"]))
+    user = User(
+        pid=pid,
+        sids=list(details.get("sids", [])),
+        is_admin=bool(details.get("is_admin", False)),
+    )
+    login_user(user, remember=True, duration=timedelta(days=1))
+
+    return jsonify({"success": True, "message": message}), status_code
 
 @vomitoria_bp.post('/logout')
 @login_required
