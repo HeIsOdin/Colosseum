@@ -204,24 +204,24 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
                             columns=solve_columns
                         )
         submit_table = sql.Identifier(env('POSTGRESQL_SUBMISSIONS_TABLE')[0])
-        submit_query = sql.SQL("WITH entered AS (" \
-                               "INSERT INTO {table} (sid, cid, pid) " \
-                               "VALUES (%s, %s, %s)" \
-                               "RETURNING sid, cid, pid" \
-                               ") " \
-                               "SELECT COUNT(*) FROM {table} s " \
-                               "JOIN entered i ON s.sid = i.sid AND s.cid = i.cid AND s.pid = i.pid " \
-                               "WHERE s.submitted_at > NOW() - INTERVAL '1 minute'"
-                               ).format(table=submit_table)
+        count_query = sql.SQL("""SELECT COUNT(*) FROM {submissions}
+                              WHERE sid = %s AND cid = %s AND pid = %s
+                              AND submitted_at > NOW() - INTERVAL '1 minute'
+                            """).format(submissions=submit_table)
+
+        insert_submission_query = sql.SQL("""INSERT INTO {submissions} (sid, cid, pid)
+                                          VALUES (%s, %s, %s)""").format(submissions=submit_table)
+        
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(submit_query, (sid, cid, pid))
+                cursor.execute(count_query, (sid, cid, pid))
                 res = cursor.fetchone()
                 if res is None: raise Exception("Failed to record submission.")
                 submission_count_per_minute = int(res[0])
                 standard_limit_per_minute = int(env('COLOSSEUM_SUBMISSION_LIMIT_PER_MIN', '10')[0])
                 if submission_count_per_minute > standard_limit_per_minute:
-                    return False, f"Submission limit exceeded. Please wait before submitting again.", 429
+                    return False, f"You are submitting too many flags", 429
+                cursor.execute(insert_submission_query, (sid, cid, pid))
                 cursor.execute(solve_query, (pid, sid, cid, hashed_flag))
                 res = cursor.fetchall()
                 if not res: return False, "Wrong Flag", 404
@@ -230,6 +230,7 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
     except ValueError as ve:
         logger.debug(f"Validation error in submitting flag: {ve}")
         return False, str(ve), 404
+    # NOTE: If the challenge has been solved by the same user, catch it
     except UniqueViolation:
         logger.warning(f"Duplicate submission for Series: {sid}, Challenge: {cid}, Player: {pid}.")
         return False, "Flag already submitted", 409
@@ -245,7 +246,9 @@ def submit_flag(sid: int, cid: int):
     data = request.get_json(silent=True)
     if data is None:
         data = request.form.to_dict()
-    submitted_flag = str(data.get("flag"))
+    submitted_flag = data.get("flag")
+    if not submitted_flag:
+        return jsonify({"success": False, "message": "Flag is required."}), 400
     success, message, status_code = _submit_flag(sid, cid, current_user.id, submitted_flag)
     return jsonify({"success": success, "message": message}), status_code
 
