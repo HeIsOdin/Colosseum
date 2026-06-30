@@ -48,7 +48,7 @@ def _get_series_list(offset: int = 0, limit: int = 10) -> tuple[list, bool, str,
 def get_series_list():
     offset = request.args.get('offset', default=0, type=int)
     limit = request.args.get('limit', default=10, type=int)
-    limit = min(max(limit, 10), 20)
+    limit = min(max(limit, 1), 20)
     series_list, success, message, status_code = _get_series_list(offset, limit)
     return jsonify({"success": success, "message": message, "series": series_list}), status_code
 
