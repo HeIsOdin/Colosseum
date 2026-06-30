@@ -29,7 +29,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
     try:
         raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         required = {"title", "description", "author", "points", "category", "difficulty", "flag"}
-        optional = {"prerequisite"}
+        optional = {"prerequisite", "requires_instance", "file_url"}
         allowed = required | optional
 
         unknown = set(challenge.keys()) - allowed
@@ -61,9 +61,27 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
                     cursor.execute(prereq_query, (sid, prerequisite))
                     if cursor.fetchone() is None:
                         return "", False, "Prerequisite challenge must exist in the same series.", 400
-
             normalized_challenge["prerequisite"] = prerequisite
-        
+        require_instance_raw = normalized_challenge.get("requires_instance")
+        if require_instance_raw is None:
+            require_instance = False
+        elif isinstance(require_instance_raw, str):
+            require_instance = require_instance_raw.lower() in ("true", "1", "yes")
+        elif isinstance(require_instance_raw, bool):
+            require_instance = require_instance_raw
+        else:
+            return "", False, "Invalid value for requires_instance. Must be a boolean.", 400
+        normalized_challenge["requires_instance"] = require_instance
+
+        file_url = normalized_challenge.get("file_url")
+        if file_url is not None:
+            if not isinstance(file_url, str):
+                return "", False, "Invalid file_url.", 400
+            file_url = file_url.strip()
+            if len(file_url ) == 0 or len(file_url) > 2048:
+                return "", False, "Invalid file_url length.", 400
+            normalized_challenge["file_url"] = file_url
+
         if normalized_challenge["difficulty"] not in DIFFICULTY_LEVELS:
             return "", False, "Invalid difficulty.", 400
 
