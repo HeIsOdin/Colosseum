@@ -255,7 +255,38 @@ def flag_hash(flag: str) -> str:
     pepper = env('COLOSSEUM_FLAG_PEPPER')[0].encode('utf-8')
     return hmac.new(pepper, flag.encode('utf-8'), hashlib.sha256).hexdigest()
 
-# -- Authentication & Profile --
+# -- Authentication --
+
+def _identify(pid: uuid.UUID, sids: list[int], is_admin: bool) -> tuple[dict, bool, str, int]:
+    """
+    Identify the user based on their PID, series IDs, and admin status.
+
+    Args:
+        - pid (uuid.UUID) : The user's unique identifier.
+        - sids (list[int]) : The list of series IDs the user is associated with.
+        - is_admin (bool) : Whether the user has admin privileges.
+    Returns:
+        tuple: A tuple containing a dictionary of user details, a boolean indicating success, a message, and an HTTP status code.
+    """
+    return {
+        "pid": str(pid),
+        "sids": sids,
+        "is_admin": is_admin,
+    }, True, "", 200
+
+@vomitoria_bp.get('/')
+@login_required
+def identify():
+    pid = as_uuid(current_user.id)
+    sids = current_user.sids
+    is_admin = current_user.is_admin
+
+    details, success, message, status_code = _identify(pid, sids, is_admin)
+
+    if not success:
+        return jsonify({"success": False, "message": message}), status_code
+
+    return jsonify({"success": True, "details": details}), status_code
 
 def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
     logger = logging.getLogger(__name__)
@@ -325,7 +356,7 @@ def login():
     details, success, message, status_code = _login(email, password)
 
     if not success:
-        return jsonify({"success": False, "message": message}), status_code
+        return jsonify({"success": False, "message": message, **details}), status_code
 
     pid = uuid.UUID(str(details["pid"]))
     user = User(
@@ -337,7 +368,7 @@ def login():
 
     return jsonify({"success": True, "message": message}), status_code
 
-@vomitoria_bp.post('/logout')
+@vomitoria_bp.delete('/')
 @login_required
 def logout():
     logger = logging.getLogger(__name__)
