@@ -1,9 +1,9 @@
-from __init__ import NAME
-from flask import Blueprint, request, jsonify, current_app
+from __init__ import NAME, REDIS_CLIENT
+from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from datetime import datetime, timedelta
 from vomitoria import admin_required
-from armamentarium import env, db_connect
+from armamentarium import env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
 
 import uuid
 import logging
@@ -50,7 +50,7 @@ def get_series_list():
     series_list, success, message, status_code = _get_series_list(offset, limit)
     return jsonify({"success": success, "message": message, "series": series_list}), status_code
 
-def _get_series_data(sid: int, Config: dict) -> tuple[dict, bool, str, int]:
+def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
     """
     Retrieve the data for a specific series by its ID.
 
@@ -61,8 +61,7 @@ def _get_series_data(sid: int, Config: dict) -> tuple[dict, bool, str, int]:
     """
     logger = logging.getLogger(NAME)
     try:
-        SIDS = dict(Config["sids"])
-        if sid not in SIDS: raise ValueError("Series is unavailable or not found.")
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         series_table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         solves_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
@@ -129,8 +128,7 @@ def _get_series_data(sid: int, Config: dict) -> tuple[dict, bool, str, int]:
 
 @auctoramentum_bp.get('/<int:sid>')
 def get_series_data(sid: int):
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    series_data, success, message, status_code = _get_series_data(sid, config)
+    series_data, success, message, status_code = _get_series_data(sid)
     return jsonify({"success": success, "message": message, "series": series_data}), status_code
 
 def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
@@ -144,6 +142,7 @@ def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
     """
     logger = logging.getLogger(NAME)
     try:
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
@@ -176,7 +175,7 @@ def get_series_overview(sid: int):
     overview, success, message, status_code = _get_series_overview(sid)
     return jsonify({"success": success, "message": message, "overview": overview}), status_code
 
-def _create_series(config: dict, title: str, description: str, starts_at_str: str,
+def _create_series(title: str, description: str, starts_at_str: str,
                    ends_at_str: str, image: str) -> tuple[str, bool, str, int]:
     """
     Create a new series in the database.
@@ -215,8 +214,8 @@ def _create_series(config: dict, title: str, description: str, starts_at_str: st
                     return "", False, "Failed to create series", 500
                 sid = str(res[0])
                 logger.debug(f"Series '{title}' created with ID {sid}.")
-                config["sids"][int(sid)] = {"cids": {}}
             conn.commit()
+        refresh_series_and_challenges(REDIS_CLIENT)
         return sid, True, f"Series {title} created successfully.", 201
     except Exception as e:
         logger.exception(f"Error creating series {title}: {e}")
@@ -231,12 +230,10 @@ def create_series():
         data = request.form.to_dict()
     data["starts_at_str"] = data.pop("starts_at", '')
     data["ends_at_str"] = data.pop("ends_at", '')
-    config = current_app.config["COLOSSEUM_DATA"]
-    sid, success, message, status_code = _create_series(config=config, **data)
+    sid, success, message, status_code = _create_series(**data)
     return jsonify({"sid": sid, "success": success, "message": message}), status_code
 
-def _delete_series(sid: int, Config: dict[str, dict[int, dict[str, dict]]]
-                ) -> tuple[bool, str, int]:
+def _delete_series(sid: int) -> tuple[bool, str, int]:
     """
     Delete a series from the database.
 
@@ -247,6 +244,7 @@ def _delete_series(sid: int, Config: dict[str, dict[int, dict[str, dict]]]
     """
     logger = logging.getLogger(NAME)
     try:
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE sid = %s").format(
             table=table
@@ -257,8 +255,8 @@ def _delete_series(sid: int, Config: dict[str, dict[int, dict[str, dict]]]
                 if cursor.rowcount == 0:
                     logger.warning(f"Series ID {sid} not found for deletion.")
                     return False, "Series ID not found", 404
-                Config["sids"].pop(sid, None)
             conn.commit()
+        refresh_series_and_challenges(REDIS_CLIENT)
         return True, f"Series ID {sid} deleted successfully.", 200
     except Exception as e:
         logger.exception(f"Error deleting series ID {sid}: {e}")
@@ -268,10 +266,10 @@ def _delete_series(sid: int, Config: dict[str, dict[int, dict[str, dict]]]
 @login_required
 @admin_required
 def delete_series(sid: int):
-    success, message, status_code = _delete_series(sid, current_app.config["COLOSSEUM_DATA"])
+    success, message, status_code = _delete_series(sid)
     return jsonify({"success": success, "message": message}), status_code
 
-def _join_series(sid: int, pid: uuid.UUID, Config: dict) -> tuple[bool, str, int]:
+def _join_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     """
     Add a player to a specific series.
 
@@ -284,10 +282,7 @@ def _join_series(sid: int, pid: uuid.UUID, Config: dict) -> tuple[bool, str, int
     """
     logger = logging.getLogger(NAME)
     try:
-        series_data = dict(Config["sids"])
-        if sid not in series_data:
-            logger.warning(f"Series ID {sid} not found.")
-            return False, "Series ID not found", 404
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
         table_name = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
         query = sql.SQL("INSERT INTO {table} (sid, pid) VALUES (%s, %s) ON CONFLICT DO NOTHING"
@@ -309,12 +304,11 @@ def _join_series(sid: int, pid: uuid.UUID, Config: dict) -> tuple[bool, str, int
 @login_required
 def join_series(sid: int):
     pid = uuid.UUID(current_user.id)
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    success, message, status_code = _join_series(sid, pid, config)
+    success, message, status_code = _join_series(sid, pid)
     if success: current_user.sids.append(sid)
     return jsonify({"success": success, "message": message}), status_code
 
-def _leave_series(sid: int, pid: uuid.UUID, Config: dict) -> tuple[bool, str, int]:
+def _leave_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     """
     Remove a player from a specific series.
 
@@ -326,10 +320,7 @@ def _leave_series(sid: int, pid: uuid.UUID, Config: dict) -> tuple[bool, str, in
     """
     logger = logging.getLogger(NAME)
     try:
-        series_data = dict(Config["sids"])
-        if sid not in series_data:
-            logger.warning(f"Series ID {sid} not found.")
-            return False, "Series ID not found", 404
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
         user_table = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE sid = %s AND pid = %s").format(
@@ -353,12 +344,11 @@ def _leave_series(sid: int, pid: uuid.UUID, Config: dict) -> tuple[bool, str, in
 @login_required
 def leave_series(sid: int):
     pid = uuid.UUID(current_user.id)
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    success, message, status_code = _leave_series(sid, pid, config)
+    success, message, status_code = _leave_series(sid, pid)
     if success and sid in current_user.sids: current_user.sids.remove(sid)
     return jsonify({"success": success, "message": message}), status_code
 
-def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID, config: dict) -> str:
+def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID,) -> str:
     """
     Perform an integration test for a specific series and challenge.
 
@@ -380,7 +370,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID, c
         
     checklist.append("Series Creation was successful.")
     try:
-        sid_str, success, message, _ = _create_series(config=config, **series_data)
+        sid_str, success, message, _ = _create_series(**series_data)
         if success:
             sid = int(sid_str)
             checks.append(True)
@@ -428,7 +418,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID, c
     try:
         if sid is None: raise ValueError("Series ID is None, cannot join series.")
         if pid is None: raise ValueError("User ID is None, cannot add to series.")
-        success, message, _ = _join_series(sid, pid, config)
+        success, message, _ = _join_series(sid, pid)
         if success:
             checks.append(True)
         else:
@@ -444,7 +434,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID, c
     checklist.append("Series Data Retrieval was successful.")
     try:
         if sid is None: raise ValueError("Series ID is None, cannot retrieve series data.")
-        series_data, success, message, _ = _get_series_data(sid, config)
+        series_data, success, message, _ = _get_series_data(sid)
         if success and isinstance(series_data, dict):
             checks.append(True)
         else:
@@ -458,7 +448,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID, c
     try:
         if sid is None: raise ValueError("Series ID is None, cannot leave series.")
         if pid is None: raise ValueError("User ID is None, cannot remove from series.")
-        success, message, _ = _leave_series(sid, pid, config)
+        success, message, _ = _leave_series(sid, pid)
         if success:
             checks.append(True)
         else:
@@ -470,7 +460,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID, c
     
     return str(sid) if sid is not None else ""
 
-def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int, config: dict) -> None:
+def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int,) -> None:
     """
     Clean up after the integration test by deleting the created series.
 
@@ -481,7 +471,7 @@ def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int,
     checklist.append("Series Deletion was successful.")
     try:
         if sid is None: raise ValueError("Series ID is None, cannot delete series.")
-        success, message, _ = _delete_series(sid, config)
+        success, message, _ = _delete_series(sid)
         if success:
             checks.append(True)
         else:
