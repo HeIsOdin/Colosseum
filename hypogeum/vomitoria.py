@@ -356,7 +356,7 @@ def login():
     details, success, message, status_code = _login(email, password)
 
     if not success:
-        return jsonify({"success": False, "message": message, **details}), status_code
+        return jsonify({"success": False, "message": message}), status_code
 
     pid = uuid.UUID(str(details["pid"]))
     user = User(
@@ -366,7 +366,7 @@ def login():
     )
     login_user(user, remember=True, duration=timedelta(days=1))
 
-    return jsonify({"success": True, "message": message}), status_code
+    return jsonify({"success": True, "message": message, **details}), status_code
 
 @vomitoria_bp.delete('/')
 @login_required
