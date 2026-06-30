@@ -192,6 +192,7 @@ def _create_challenge_solves_table(cursor: psycopg2.extensions.cursor) -> None:
                 sid INTEGER REFERENCES {}(sid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
                 cid INTEGER REFERENCES {}(cid) ON DELETE CASCADE,
+                subid BIGINT REFERENCES {}(subid) ON DELETE CASCADE,
                 solved_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 points INTEGER NOT NULL,
                 PRIMARY KEY (sid, pid, cid)
