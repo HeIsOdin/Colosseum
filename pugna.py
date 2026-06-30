@@ -258,7 +258,7 @@ def submit_flag(sid: int, cid: int):
 
 def _get_solves(sid: int, cid: int) -> tuple[list, bool, str, int]:
     """
-    Retrieve the solvess for a specific series by its ID.
+    Retrieve the solves for a specific series by its ID.
 
     Args:
         - sid (int) : The ID of the series.
@@ -304,10 +304,10 @@ def _get_solves(sid: int, cid: int) -> tuple[list, bool, str, int]:
         # Send it raw. Client will handle sorting and filtering
         return res, True, "Solves retrieved successfully.", 200
     except ValueError as ve:
-        logger.debug(f"Validation error while retrieving solvess for Series ID {sid}: {ve}")
+        logger.debug(f"Validation error while retrieving solves for Series ID {sid}: {ve}")
         return [], False, str(ve), 404
     except Exception as e:
-        logger.exception(f"Error retrieving solvess for Series ID {sid}: {e}")
+        logger.exception(f"Error retrieving solves for Series ID {sid}: {e}")
         return [], False, "Internal server error", 500
 
 @pugna_bp.get('/<int:cid>/solves/')
@@ -315,7 +315,7 @@ def _get_solves(sid: int, cid: int) -> tuple[list, bool, str, int]:
 @series_signup_required
 def get_solves(sid: int, cid: int):
     entries, success, message, status_code = _get_solves(sid, cid)
-    return jsonify({"success": success, "message": message, "submissions": entries}), status_code
+    return jsonify({"success": success, "message": message, "solves": entries}), status_code
 
 def _get_submissions(sid: int, cid: int, pid: uuid.UUID) -> tuple[list, bool, str, int]:
     """
