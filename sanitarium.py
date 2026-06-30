@@ -1,11 +1,11 @@
-from __init__ import NAME
+from __init__ import NAME, REDIS_CLIENT
 from flask import Blueprint, jsonify, current_app, request
 from vomitoria import integration_test as vomitoria, admin_required
 from gladiator import integration_test as gladiator, integration_test_cleanup as pid_cleanup
 from auctoramentum import integration_test as auctoramentum, integration_test_cleanup as sid_cleanup
 from pugna import integration_test as pugna, integration_test_cleanup as cid_cleanup
 from vespasian import bootstrap
-from armamentarium import env, db_connect
+from armamentarium import env, db_connect, refresh_series_and_challenges
 
 import uuid
 import logging
@@ -42,10 +42,7 @@ def health_check():
                 if db_status is None or db_status[0] != 1:
                     logger.error(f"Database health check failed: {db_status}")
                     return jsonify({"message": "Database connection failed"}), 503
-        config = current_app.config["COLOSSEUM_DATA"]
-        if not config or "sids" not in config or len(config["sids"]) == 0:
-            logger.error(f"Configuration data is missing or invalid. {config}")
-            return jsonify({"message": "Configuration data is missing or invalid"}), 500
+        refresh_series_and_challenges(REDIS_CLIENT)
         return jsonify({"message": "Si Vales Bene Est, Ego Valeo"}), 200
     except Exception as e:
         logger.exception(f"Health check failed: {e}")
@@ -65,22 +62,22 @@ def _integration_test() -> tuple[dict, bool, str, int]:
     pid: uuid.UUID | None = None
     email: str = uuid.uuid4().hex + "@oluwajuwon.dev"
     password: str = uuid.uuid4().hex
-    config = current_app.config["COLOSSEUM_DATA"]
 
     logger = logging.getLogger(NAME)
     try:
+        refresh_series_and_challenges(REDIS_CLIENT)
         pid = vomitoria(checklist, checks, email, password)
         if pid is None: raise ValueError("User ID is None, cannot continue with test.")
         gladiator(checklist, checks, pid)
-        sid_str = auctoramentum(checklist, checks, pid, config)
+        sid_str = auctoramentum(checklist, checks, pid)
         if not sid_str.isdigit(): raise ValueError(f"Series ID is not a valid integer: {sid_str}")
         sid = int(sid_str)
-        cid_str = pugna(checklist, checks, sid, pid, config)
+        cid_str = pugna(checklist, checks, sid, pid)
         if not cid_str.isdigit(): raise ValueError(f"Challenge ID is not a valid integer: {cid_str}")
         cid = int(cid_str)
         pid_cleanup(checklist, checks, pid)
-        cid_cleanup(checklist, checks, sid, cid, config)
-        sid_cleanup(checklist, checks, sid, config)
+        cid_cleanup(checklist, checks, sid, cid)
+        sid_cleanup(checklist, checks, sid)
         return {"checklist": checklist, "checks": checks}, True, "", 200
     except ValueError as ve:
         logger.error(f"Integration test failed due to a value error: {ve}")
@@ -119,6 +116,7 @@ def _bootstrap_and_test(data: dict[str, str]) -> tuple[dict, bool, str, int]:
         redispassword = data.get("redispassword")
         if not redispassword: raise ValueError("Redis password is required for bootstrapping.")
         bootstrap(superdatabase, superuser, superpassword, redispassword)
+        refresh_series_and_challenges(REDIS_CLIENT)
         result, success, message, status_code = _integration_test()
         if not success:
             logger.error(f"Integration test failed after bootstrapping: {message}")
