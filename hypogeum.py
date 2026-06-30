@@ -10,7 +10,7 @@ from sanitarium import sanitarium_bp
 from pugna import pugna_bp
 
 def configure_app(app: Flask) -> None:
-    app.config['COLOSSEUM_SECRET_KEY'] = env('COLOSSEUM_SECRET_KEY')[0]
+    app.config['SECRET_KEY'] = env('COLOSSEUM_SECRET_KEY')[0]
     app.config['SESSION_TYPE'] = 'redis'
     app.config['SESSION_REDIS'] = REDIS_CLIENT
     app.config['SESSION_KEY_PREFIX'] = env('REDIS_KEY_PREFIX')[0]
