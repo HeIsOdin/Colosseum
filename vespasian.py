@@ -239,41 +239,38 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
         )
     )
 
-def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
+def _create_update_at_trigger(cursor):
     table_names = [
-        sql.Identifier(table) for table in [
-            env('POSTGRESQL_USER_TABLE')[0],
-            env('POSTGRESQL_INSTANCES_TABLE')[0],
-        ]
+        env("POSTGRESQL_USER_TABLE")[0],
+        env("POSTGRESQL_INSTANCES_TABLE")[0],
     ]
+
     for table_name in table_names:
         trigger_function_name = f"{table_name}_update_timestamp"
         trigger_name = f"{table_name}_update_timestamp_trigger"
 
         cursor.execute(
             sql.SQL("""
-                CREATE OR REPLACE FUNCTION {}()
+                CREATE OR REPLACE FUNCTION {function_name}()
                 RETURNS TRIGGER AS $$
                 BEGIN
                     NEW.updated_at = CURRENT_TIMESTAMP;
                     RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql;
-            """).format(sql.Identifier(trigger_function_name))
+            """).format(function_name=sql.Identifier(trigger_function_name))
         )
 
         cursor.execute(
             sql.SQL("""
-                DROP TRIGGER IF EXISTS {} ON {};
-                CREATE TRIGGER {}
-                BEFORE UPDATE ON {}
-                FOR EACH ROW EXECUTE FUNCTION {}();
+                DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};
+                CREATE TRIGGER {trigger_name}
+                BEFORE UPDATE ON {table_name}
+                FOR EACH ROW EXECUTE FUNCTION {function_name}();
             """).format(
-                sql.Identifier(trigger_name),
-                table_name,
-                sql.Identifier(trigger_name),
-                table_name,
-                sql.Identifier(trigger_function_name)
+                trigger_name=sql.Identifier(trigger_name),
+                table_name=sql.Identifier(table_name),
+                function_name=sql.Identifier(trigger_function_name),
             )
         )
 
