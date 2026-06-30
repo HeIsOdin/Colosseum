@@ -234,7 +234,10 @@ def control_challenge_instance(sid: int, cid: int):
     data = request.get_json(silent=True)
     if data is None:
         data = request.form.to_dict()
-    action = str(data.get("action")).lower()
+    action = data.get("action")
+    if not action:
+        return jsonify({"success": False, "message": "Action is required."}), 400
+    action = action.strip().lower()
     pid = as_uuid(current_user.id)
     
     success, message, status_code = _control_instance(sid, cid, pid, action)
