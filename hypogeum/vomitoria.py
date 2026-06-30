@@ -4,7 +4,7 @@ from flask_login import login_user, logout_user, login_required, current_user, U
 from datetime import timedelta
 from functools import wraps
 from time import time
-from hypogeum.armamentarium import env, db_connect, redis_connect
+from hypogeum.armamentarium import env, db_connect, redis_connect, as_uuid
 
 import re
 import hmac
@@ -111,6 +111,110 @@ def cooldown_check(key_func, seconds=5):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
+
+def locked_challenge_check(f):
+    """
+    Require that:
+    1. the request has sid and cid route arguments,
+    2. the current user is a member of the series,
+    3. the challenge exists in that series,
+    4. if the challenge has a prerequisite, the user has solved it.
+
+    This should protect active challenge interactions only:
+    - instance control
+    - flag submission
+
+    It should not be used for public/visible challenge metadata.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        logger = logging.getLogger(__name__)
+
+        sid = kwargs.get("sid")
+        cid = kwargs.get("cid")
+
+        if sid is None:
+            return jsonify({"success": False, "message": "Series ID not provided."}), 400
+
+        if cid is None:
+            return jsonify({"success": False, "message": "Challenge ID not provided."}), 400
+
+        if not current_user.is_authenticated:
+            return jsonify({"success": False, "message": "Authentication required."}), 401
+
+        try:
+            pid = as_uuid(current_user.id)
+
+            memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
+            challenges_table = env("POSTGRESQL_CHALLENGES_TABLE")[0]
+            solves_table = env("POSTGRESQL_SOLVES_TABLE")[0]
+
+            membership_query = sql.SQL("""
+                SELECT 1
+                FROM {memberships}
+                WHERE sid = %s AND pid = %s
+                LIMIT 1
+            """).format(
+                memberships=sql.Identifier(memberships_table),
+            )
+
+            challenge_query = sql.SQL("""
+                SELECT prerequisite
+                FROM {challenges}
+                WHERE sid = %s AND cid = %s
+                LIMIT 1
+            """).format(
+                challenges=sql.Identifier(challenges_table),
+            )
+
+            prerequisite_solve_query = sql.SQL("""
+                SELECT 1
+                FROM {solves}
+                WHERE sid = %s AND cid = %s AND pid = %s
+                LIMIT 1
+            """).format(
+                solves=sql.Identifier(solves_table),
+            )
+
+            with db_connect() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(membership_query, (sid, pid))
+                    if cursor.fetchone() is None:
+                        return jsonify({
+                            "success": False,
+                            "message": "User not signed up for this series."
+                        }), 403
+
+                    cursor.execute(challenge_query, (sid, cid))
+                    challenge_row = cursor.fetchone()
+
+                    if challenge_row is None:
+                        return jsonify({
+                            "success": False,
+                            "message": "Challenge not found in this series."
+                        }), 404
+
+                    prerequisite = challenge_row[0]
+
+                    if prerequisite is not None:
+                        cursor.execute(prerequisite_solve_query, (sid, prerequisite, pid))
+                        if cursor.fetchone() is None:
+                            return jsonify({
+                                "success": False,
+                                "message": f"This challenge is locked. Solve challenge {prerequisite} first."
+                            }), 403
+
+            return f(*args, **kwargs)
+
+        except ValueError:
+            return jsonify({"success": False, "message": "Invalid user ID."}), 400
+        except Exception as e:
+            logger.exception(
+                f"Challenge interaction authorization failed for sid={sid}, cid={cid}, user={current_user.get_id()}: {e}"
+            )
+            return jsonify({"success": False, "message": "Internal server error"}), 500
+
+    return decorated_function
 
 def raise_on_invalid_creds(email: str, password: str):
     """

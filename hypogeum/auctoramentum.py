@@ -131,6 +131,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
         return {}, False, "Internal server error", 500
 
 @auctoramentum_bp.get('/<int:sid>')
+@login_required
 def get_series_data(sid: int):
     series_data, success, message, status_code = _get_series_data(sid)
     return jsonify({"success": success, "message": message, "series": series_data}), status_code

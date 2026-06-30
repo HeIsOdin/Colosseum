@@ -6,7 +6,7 @@ from hypogeum.armamentarium import (
     as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
 )
 from hypogeum.vomitoria import (
-    flag_hash, series_signup_required, admin_required, cooldown_check
+    flag_hash, series_signup_required, admin_required, cooldown_check, locked_challenge_check
 )
 
 import uuid
@@ -175,6 +175,7 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[
 @pugna_bp.patch('/<int:cid>')
 @login_required
 @series_signup_required
+@locked_challenge_check
 def control_challenge_instance(sid: int, cid: int):  
     data = request.get_json(silent=True)
     if data is None:
@@ -261,6 +262,7 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
 @login_required
 @cooldown_check(lambda: current_user.id, seconds=10)
 @series_signup_required
+@locked_challenge_check
 def submit_flag(sid: int, cid: int):
     data = request.get_json(silent=True)
     if data is None:
