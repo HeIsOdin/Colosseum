@@ -1,8 +1,8 @@
-from __init__ import NAME
-from flask import Blueprint, request, jsonify, current_app
+from __init__ import NAME, REDIS_CLIENT
+from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
-from armamentarium import env, db_connect
+from armamentarium import env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
 from vomitoria import flag_hash, series_signup_required, admin_required, flag_hash, cooldown_check
 
 import uuid
@@ -11,19 +11,19 @@ import psycopg2.sql as sql
 
 pugna_bp = Blueprint('pugna', __name__, url_prefix='/series/<int:sid>/challenges/')
 
-def _create_challenge(sid: int, Config: dict, **challenge) -> tuple[str, bool, str, int]:
+def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
     """
     Create a new challenge for a specific series.
 
     Args:
         - sid (int) : The ID of the series.
-        - config (dict) : The configuration dictionary containing series and challenge data.
         - challenge (dict) : The challenge data to be created.
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
     logger = logging.getLogger(NAME)
     try:
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         columns = [
             'title', 'description', 'author', 'points',
             'category', 'difficulty', 'prerequisite', 'flag'
@@ -31,8 +31,6 @@ def _create_challenge(sid: int, Config: dict, **challenge) -> tuple[str, bool, s
         normalized_challenge = {k:v for k,v in challenge.items() if k in columns and v is not None}
         normalized_challenge['flag'] = flag_hash(normalized_challenge["flag"])
         normalized_challenge['sid'] = sid
-        SIDS = dict(Config["sids"])
-        if sid not in SIDS: raise ValueError(f"Series {sid} is unavailable or not found.")
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col) for col in normalized_challenge.keys()
@@ -51,8 +49,9 @@ def _create_challenge(sid: int, Config: dict, **challenge) -> tuple[str, bool, s
                 res = cursor.fetchone()
                 if not res: raise Exception("Failed to create challenge.")
                 cid = str(res[0])
-                Config["sids"][sid]["cids"][int(cid)] = {}
-                return cid, True, f"Challenge created successfully", 201
+            conn.commit()
+        refresh_series_and_challenges(REDIS_CLIENT)
+        return cid, True, f"Challenge created successfully", 201
     except ValueError as ve:
         logger.debug(f"Validation error in creating challenge: {ve}")
         return "", False, str(ve), 404
@@ -67,28 +66,23 @@ def create_challenge(sid: int):
     data = request.get_json(silent=True)
     if data is None:
         data = request.form.to_dict()
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    cid, success, message, status_code = _create_challenge(sid, config, **data)
+    
+    cid, success, message, status_code = _create_challenge(sid, **data)
     return jsonify({"success": success, "message": message, "cid": cid}), status_code
 
-def _delete_challenge(sid: int, cid: int, Config: dict[str, dict[int, dict[str, dict]]]
-                    ) -> tuple[bool, str, int]:
+def _delete_challenge(sid: int, cid: int) -> tuple[bool, str, int]:
     """
     Delete a specific challenge from a series.
 
     Args:
         - sid (int) : The ID of the series.
         - cid (int) : The ID of the challenge to be deleted.
-        - config (dict) : The configuration dictionary containing series and challenge data.
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
     logger = logging.getLogger(NAME)
     try:
-        SIDS = dict(Config["sids"])
-        if sid not in SIDS: raise ValueError(f"Series {sid} is unavailable or not found.")
-        CIDS = dict(SIDS[sid]["cids"])
-        if cid not in CIDS: raise ValueError(f"Challenge {cid} is unavailable or not found.")
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
 
         table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE sid = %s AND cid = %s").format(table=table)
@@ -97,9 +91,9 @@ def _delete_challenge(sid: int, cid: int, Config: dict[str, dict[int, dict[str, 
                 cursor.execute(query, (sid, cid))
                 if cursor.rowcount == 0:
                     return False, f"Challenge {cid} not found in Series {sid}.", 404
-                Config["sids"][sid]["cids"].pop(cid, None)
             conn.commit()
-            return True, f"Challenge {cid} deleted successfully from Series {sid}.", 200
+        refresh_series_and_challenges(REDIS_CLIENT)
+        return True, f"Challenge {cid} deleted successfully from Series {sid}.", 200
     except ValueError as ve:
         logger.debug(f"Validation error in deleting challenge: {ve}")
         return False, str(ve), 404
@@ -120,11 +114,11 @@ def delete_challenge(sid: int, cid: int):
     Returns:
         JSON response indicating the success or failure of the deletion.
     """
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    success, message, status_code = _delete_challenge(sid, cid, config)
+
+    success, message, status_code = _delete_challenge(sid, cid)
     return jsonify({"success": success, "message": message}), status_code
 
-def _control_instance(sid: int, cid: int, pid: uuid.UUID, Config: dict, action: str) -> tuple[bool, str, int]:
+def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[bool, str, int]:
     """
     Control the state of a challenge instance (start, stop, restart).
     Note: There are two kinds of instances: the shared instance and the spawned instance.
@@ -139,12 +133,10 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, Config: dict, action: 
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
+
     logger = logging.getLogger(NAME)
     try:
-        SIDS = dict(Config["sids"])
-        if sid not in SIDS: raise ValueError(f"Series {sid} is unavailable or not found.")
-        CIDS = dict(SIDS[sid]["cids"])
-        if cid not in CIDS: raise ValueError(f"Challenge {cid} is unavailable or not found.")
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
 
         action = action.lower()
         if action == "start":
@@ -175,11 +167,11 @@ def control_challenge_instance(sid: int, cid: int):
         data = request.form.to_dict()
     action = str(data.get("action")).lower()
     pid = uuid.UUID(current_user.id)
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    success, message, status_code = _control_instance(sid, cid, pid, config, action)
+    
+    success, message, status_code = _control_instance(sid, cid, pid, action)
     return jsonify({"success": success, "message": message}), status_code
 
-def _submit_flag(sid: int, cid: int, pid: uuid.UUID, Config: dict, flag: str) -> tuple[bool, str, int]:
+def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, str, int]:
     """
     Submit a flag for a specific challenge in a series.
 
@@ -191,14 +183,12 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, Config: dict, flag: str) ->
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
     """
+
     logger = logging.getLogger(NAME)
     try:
         hashed_flag = flag_hash(flag)
 
-        SIDS = dict(Config["sids"])
-        if sid not in SIDS: raise ValueError(f"Series {sid} is unavailable or not found.")
-        CIDS = dict(SIDS[sid]["cids"])
-        if cid not in CIDS: raise ValueError(f"Challenge {cid} is unavailable or not found.")
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
 
         solve_insert_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
         solve_select_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
@@ -214,9 +204,15 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, Config: dict, flag: str) ->
                             columns=solve_columns
                         )
         submit_table = sql.Identifier(env('POSTGRESQL_SUBMISSIONS_TABLE')[0])
-        submit_query = sql.SQL("INSERT INTO {table} (sid, cid, pid) VALUES (%s, %s, %s)").format(
-            table=submit_table
-        )
+        submit_query = sql.SQL("WITH entered AS (" \
+                               "INSERT INTO {table} (sid, cid, pid) " \
+                               "VALUES (%s, %s, %s)" \
+                               "RETURNING sid, cid, pid" \
+                               ") " \
+                               "SELECT COUNT(*) FROM {table} s " \
+                               "JOIN entered i ON s.sid = i.sid AND s.cid = i.cid AND s.pid = i.pid " \
+                               "WHERE s.submitted_at > NOW() - INTERVAL '1 minute'"
+                               ).format(table=submit_table)
         with db_connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(submit_query, (sid, cid, pid))
@@ -229,7 +225,7 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, Config: dict, flag: str) ->
                 cursor.execute(solve_query, (pid, sid, cid, hashed_flag))
                 res = cursor.fetchall()
                 if not res: return False, "Wrong Flag", 404
-                _control_instance(sid, cid, pid, Config, "stop")
+                _control_instance(sid, cid, pid, "stop")
                 return True, "Correct Flag", 200
     except ValueError as ve:
         logger.debug(f"Validation error in submitting flag: {ve}")
@@ -250,11 +246,10 @@ def submit_flag(sid: int, cid: int):
     if data is None:
         data = request.form.to_dict()
     submitted_flag = str(data.get("flag"))
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    success, message, status_code = _submit_flag(sid, cid, current_user.id, config, submitted_flag)
+    success, message, status_code = _submit_flag(sid, cid, current_user.id, submitted_flag)
     return jsonify({"success": success, "message": message}), status_code
 
-def _get_solves(sid: int, cid: int, Config : dict) -> tuple[list, bool, str, int]:
+def _get_solves(sid: int, cid: int) -> tuple[list, bool, str, int]:
     """
     Retrieve the solvess for a specific series by its ID.
 
@@ -263,10 +258,10 @@ def _get_solves(sid: int, cid: int, Config : dict) -> tuple[list, bool, str, int
     Returns:
         list: A list of dictionaries, each representing a submission.
     """
+
     logger = logging.getLogger(NAME)
     try:
-        SIDS = dict(Config["sids"])
-        if sid not in SIDS: raise ValueError("Series is unavailable or not found.")
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
         solves_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
         players_table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
         columns = sql.SQL(', ').join([
@@ -312,11 +307,10 @@ def _get_solves(sid: int, cid: int, Config : dict) -> tuple[list, bool, str, int
 @login_required
 @series_signup_required
 def get_solves(sid: int, cid: int):
-    config = dict(current_app.config["COLOSSEUM_DATA"])
-    entries, success, message, status_code = _get_solves(sid, cid, config)
+    entries, success, message, status_code = _get_solves(sid, cid)
     return jsonify({"success": success, "message": message, "submissions": entries}), status_code
 
-def _get_submissions(sid: int, cid: int, pid: uuid.UUID, Config : dict) -> tuple[list, bool, str, int]:
+def _get_submissions(sid: int, cid: int, pid: uuid.UUID) -> tuple[list, bool, str, int]:
     """
     Retrieve the submissions for a specific series and player by their IDs.
 
@@ -329,8 +323,7 @@ def _get_submissions(sid: int, cid: int, pid: uuid.UUID, Config : dict) -> tuple
 
     logger = logging.getLogger(NAME)
     try:
-        SIDS = dict(Config["sids"])
-        if sid not in SIDS: raise ValueError("Series is unavailable or not found.")
+        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
         submissions_table = sql.Identifier(env('POSTGRESQL_SUBMISSIONS_TABLE')[0])
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         columns = sql.SQL(', ').join([
@@ -375,13 +368,11 @@ def _get_submissions(sid: int, cid: int, pid: uuid.UUID, Config : dict) -> tuple
 @login_required
 @series_signup_required
 def get_submissions(sid: int, cid: int):
-    config = dict(current_app.config["COLOSSEUM_DATA"])
     pid = uuid.UUID(current_user.id)
-    entries, success, message, status_code = _get_submissions(sid, cid, pid, config)
+    entries, success, message, status_code = _get_submissions(sid, cid, pid)
     return jsonify({"success": success, "message": message, "submissions": entries}), status_code
 
-def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uuid.UUID,
-                    config: dict) -> str:
+def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uuid.UUID) -> str:
     """
     Perform an integration test for a specific series and challenge.
 
@@ -391,7 +382,6 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
         - sid (int) : The ID of the series.
         - cid (int) : The ID of the challenge.
         - pid (uuid.UUID) : The ID of the player.
-        - config (dict) : The configuration dictionary containing series and challenge data.
     """
     logger = logging.getLogger(NAME)
 
@@ -409,7 +399,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
 
     checklist.append("Challenge Creation was successful.")
     try:
-        cid_str, success, message, _ = _create_challenge(sid, config, **challenge_data)
+        cid_str, success, message, _ = _create_challenge(sid, **challenge_data)
         if success:
             cid = int(cid_str)
             checks.append(True)
@@ -423,7 +413,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
     checklist.append("Challenge Control was successful.")
     try:
         if cid is None: raise ValueError("Challenge ID is None, cannot control instance.")
-        success, message, _ = _control_instance(sid, cid, pid, config, "start")
+        success, message, _ = _control_instance(sid, cid, pid, "start")
         if success:
             checks.append(True)
         else:
@@ -437,7 +427,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
     try:
         if cid is None: raise ValueError("Challenge ID is None, cannot submit flag.")
         flag = str(challenge_data["flag"])
-        success, message, _ = _submit_flag(sid, cid, pid, config, flag)
+        success, message, _ = _submit_flag(sid, cid, pid, flag)
         if success:
             checks.append(True)
         else:
@@ -450,7 +440,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
     checklist.append("Submissions Retrieval was successful.")
     try:
         if cid is None: raise ValueError("Challenge ID is None, cannot retrieve submissions.")
-        submissions, success, message, _ = _get_submissions(sid, cid, pid, config)
+        submissions, success, message, _ = _get_submissions(sid, cid, pid)
         if success and isinstance(submissions, list):
             checks.append(True)
         else:
@@ -463,7 +453,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
     checklist.append("Solves Retrieval was successful.")
     try:
         if cid is None: raise ValueError("Challenge ID is None, cannot retrieve solves.")
-        solves, success, message, _ = _get_solves(sid, cid, config)
+        solves, success, message, _ = _get_solves(sid, cid)
         if success and isinstance(solves, list):
             checks.append(True)
         else:
@@ -475,8 +465,7 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
     
     return str(cid) if cid is not None else ""
 
-def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int, cid: int,
-                            config: dict) -> None:
+def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int, cid: int) -> None:
     """
     Perform cleanup after the integration test to remove any test data created.
 
@@ -489,7 +478,7 @@ def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int,
     logger = logging.getLogger(NAME)
     checklist.append("Cleanup of Test Challenge was successful.")
     try:
-        success, message, _ = _delete_challenge(sid, cid, config)
+        success, message, _ = _delete_challenge(sid, cid)
         if success:
             checks.append(True)
         else:
