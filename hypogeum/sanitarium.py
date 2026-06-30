@@ -1,6 +1,7 @@
 from . import REDIS_CLIENT
 from flask import Blueprint, jsonify
-from hypogeum.vomitoria import integration_test as vomitoria, admin_required, login_required
+from flask_login import login_required
+from hypogeum.vomitoria import integration_test as vomitoria, admin_required
 from hypogeum.gladiator import (
     integration_test as gladiator, integration_test_cleanup as pid_cleanup
 )
@@ -45,7 +46,6 @@ def health_check():
                 if db_status is None or db_status[0] != 1:
                     logger.error(f"Database health check failed: {db_status}")
                     return jsonify({"message": "Database connection failed"}), 503
-        refresh_series_and_challenges(REDIS_CLIENT)
         return jsonify({"message": "Si Vales Bene Est, Ego Valeo"}), 200
     except Exception as e:
         logger.exception(f"Health check failed: {e}")

@@ -200,6 +200,12 @@ def _create_series(title: str, description: str, starts_at_str: str,
     try:
         starts_at = datetime.fromisoformat(starts_at_str)
         ends_at = datetime.fromisoformat(ends_at_str) if ends_at_str else None
+        if ends_at is not None and ends_at <= starts_at:
+            return "", False, "End date must be strictly after Start date.", 400
+
+        if not title.strip(): return "", False, "Title must not be empty.", 400
+        if not description.strip(): return "", False, "Description must not be empty.", 400
+        if len(title) > 50: return "", False, "Title must not exceed 50 characters.", 400
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
@@ -223,6 +229,9 @@ def _create_series(title: str, description: str, starts_at_str: str,
             conn.commit()
         refresh_series_and_challenges(REDIS_CLIENT)
         return sid, True, f"Series {title} created successfully.", 201
+    except ValueError as ve:
+        logger.debug(f"Validation error while creating series '{title}': {ve}")
+        return "", False, str(ve), 400
     except Exception as e:
         logger.exception(f"Error creating series {title}: {e}")
         return "", False, "Internal server error", 500

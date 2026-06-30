@@ -4,6 +4,7 @@ from flask_login import login_user, logout_user, login_required, current_user, U
 from datetime import timedelta
 from functools import wraps
 from time import time
+from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import env, db_connect, as_uuid
 
 import re
@@ -94,20 +95,20 @@ def cooldown_check(key_func, seconds=5):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             r = REDIS_CLIENT
-            
-            key = f"colosseum:cooldown:{key_func()}"
-            last_submission = r.get(key)
-            current_time = time()
-            
-            if last_submission:
-                elapsed = current_time - float(last_submission)
-                if elapsed < seconds:
-                    remaining = round(seconds - elapsed, 1)
-                    return jsonify({
-                        "error": f"Please wait {remaining}s before submitting again."
-                    }), 429
-            
-            r.setex(key, seconds, current_time)
+            key_prefix = env('REDIS_KEY_PREFIX')[0]
+            key = f"{key_prefix}cooldown:{key_func()}"
+
+            acquired = r.set(key, "1", nx=True, ex=seconds)
+
+            if not acquired:
+                ttl = r.ttl(key)
+                if ttl is None or ttl < 0:
+                    ttl = seconds
+                return jsonify({
+                    "success": False,
+                    "message": f"Please wait {ttl}s before trying again."
+                }), 429
+
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -288,14 +289,14 @@ def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
 
         pid, password_hash, is_admin, status, sids = row
 
-        if status not in ["active", "verified"]:
-            return {}, False, f"User status is '{status}', cannot log in.", 403
-
         if password_hash is None:
             return {}, False, "Invalid credentials", 401
 
         if not bcrypt.checkpw(password.encode("utf-8"), str(password_hash).encode("utf-8")):
             return {}, False, "Invalid credentials", 401
+        
+        if status not in ["active", "verified"]:
+            return {}, False, "Invalid Credentials", 401
 
         return {
             "pid": str(pid),
@@ -316,9 +317,9 @@ def login():
     if data is None:
         data = request.form.to_dict()
 
-    email = str(data.get("email"))
-    password = str(data.get("password"))
-    if not email or not password:
+    email = data.get("email")
+    password = data.get("password")
+    if not isinstance(email, str) or not isinstance(password, str):
         return jsonify({"success": False, "message": "Email and password are required."}), 400
     
     details, success, message, status_code = _login(email, password)
@@ -362,7 +363,7 @@ def _register(email: str, password: str) -> tuple[bool, str, int]:
     try:
         raise_on_invalid_creds(email, password)
         salt = bcrypt.gensalt()
-        pid = str(uuid.uuid4().hex)
+        pid = str(uuid.uuid4()) # NOTE: With adapters, everywhere is good
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
         table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
         cols = ['pid', 'email', 'password']
@@ -376,10 +377,13 @@ def _register(email: str, password: str) -> tuple[bool, str, int]:
         with db_connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, (pid, email, hashed_password))
-        return True, "User registered successfully.", 201
+        return True, "Registration request received.", 202
     except ValueError as ve:
         logger.debug(f"Validation error during registration for user {email}: {ve}")
         return False, str(ve), 400
+    except UniqueViolation:
+        logger.info("Registration request could not create a new account.")
+        return True, "Registration request received.", 202
     except Exception as e:
         logger.exception(f"Error during registration for user {email}: {e}")
         return False, "Internal server error", 500

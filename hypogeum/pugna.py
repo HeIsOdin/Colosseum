@@ -1,4 +1,4 @@
-from . import REDIS_CLIENT
+from . import REDIS_CLIENT, DIFFICULTY_LEVELS, CATEGORIES
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
@@ -64,6 +64,12 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
 
             normalized_challenge["prerequisite"] = prerequisite
         
+        if normalized_challenge["difficulty"] not in DIFFICULTY_LEVELS:
+            return "", False, "Invalid difficulty.", 400
+
+        if normalized_challenge["category"] not in CATEGORIES:
+            return "", False, "Invalid category.", 400
+        
         columns = sql.SQL(', ').join(
             sql.Identifier(col) for col in normalized_challenge.keys()
         )
@@ -86,7 +92,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
         return cid, True, f"Challenge created successfully", 201
     except ValueError as ve:
         logger.debug(f"Validation error in creating challenge: {ve}")
-        return "", False, str(ve), 404
+        return "", False, str(ve), 400
     except Exception as e:
         logger.exception(f"Error creating challenge for Series ID {sid}: {e}")
         return "", False, "Internal server error", 500
@@ -236,10 +242,6 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
                             columns=solve_columns
                         )
         submit_table = sql.Identifier(env('POSTGRESQL_SUBMISSIONS_TABLE')[0])
-        count_query = sql.SQL("""SELECT COUNT(*) FROM {submissions}
-                              WHERE sid = %s AND cid = %s AND pid = %s
-                              AND submitted_at > NOW() - INTERVAL '1 minute'
-                            """).format(submissions=submit_table)
 
         insert_submission_query = sql.SQL("""INSERT INTO {submissions} (sid, cid, pid)
                                           VALUES (%s, %s, %s)
@@ -248,13 +250,6 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
         
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(count_query, (sid, cid, pid))
-                res = cursor.fetchone()
-                if res is None: raise Exception("Failed to record submission.")
-                submission_count_per_minute = int(res[0])
-                standard_limit_per_minute = int(env('COLOSSEUM_SUBMISSION_LIMIT_PER_MIN', '10')[0])
-                if submission_count_per_minute >= standard_limit_per_minute:
-                    return False, f"You are submitting too many flags", 429
                 cursor.execute(insert_submission_query, (sid, cid, pid))
                 res = cursor.fetchone()
                 if res is None: raise Exception("Failed to record submission.")
@@ -278,7 +273,10 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
 @pugna_bp.post('/<int:cid>')
 @login_required
 @locked_challenge_check
-@cooldown_check(lambda: current_user.id, seconds=10)
+@cooldown_check(
+    lambda: f"{current_user.id}:{(request.view_args or {}).get('sid')}:{(request.view_args or {}).get('cid')}",
+    seconds=10,
+)
 def submit_flag(sid: int, cid: int):
     data = request.get_json(silent=True)
     if data is None:
@@ -286,7 +284,8 @@ def submit_flag(sid: int, cid: int):
     submitted_flag = data.get("flag")
     if not submitted_flag:
         return jsonify({"success": False, "message": "Flag is required."}), 400
-    success, message, status_code = _submit_flag(sid, cid, current_user.id, submitted_flag)
+    pid = as_uuid(current_user.id)
+    success, message, status_code = _submit_flag(sid, cid, pid, submitted_flag)
     return jsonify({"success": success, "message": message}), status_code
 
 def _get_solves(sid: int, cid: int) -> tuple[list, bool, str, int]:
