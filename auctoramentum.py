@@ -306,7 +306,7 @@ def _join_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
 def join_series(sid: int):
     pid = uuid.UUID(current_user.id)
     success, message, status_code = _join_series(sid, pid)
-    if success: current_user.sids.append(sid)
+    if success and sid not in current_user.sids: current_user.sids.append(sid)
     return jsonify({"success": success, "message": message}), status_code
 
 def _leave_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
