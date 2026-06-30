@@ -1,8 +1,22 @@
 import os
+import uuid
 import json
 import redis
 import psycopg2
 import psycopg2.sql as sql
+
+def as_uuid(value) -> uuid.UUID:
+    """
+    Convert a string or UUID to a UUID object.
+
+    Args:
+        - value (str | uuid.UUID): The value to convert.
+    Returns:
+        - uuid.UUID: The converted UUID object.
+    """
+    if isinstance(value, uuid.UUID):
+        return value
+    return uuid.UUID(str(value))
 
 def db_connect() -> psycopg2.extensions.connection:
     db = {

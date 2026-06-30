@@ -4,7 +4,7 @@ from flask_login import login_required, current_user
 from datetime import datetime, timedelta
 from hypogeum.vomitoria import admin_required
 from hypogeum.armamentarium import (
-    env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
 )
 
 import uuid
@@ -306,7 +306,7 @@ def _join_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
 @auctoramentum_bp.put('/<int:sid>/join')
 @login_required
 def join_series(sid: int):
-    pid = uuid.UUID(current_user.id)
+    pid = as_uuid(current_user.id)
     success, message, status_code = _join_series(sid, pid)
     if success and sid not in current_user.sids: current_user.sids.append(sid)
     return jsonify({"success": success, "message": message}), status_code
@@ -346,7 +346,7 @@ def _leave_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
 @auctoramentum_bp.delete('/<int:sid>/leave')
 @login_required
 def leave_series(sid: int):
-    pid = uuid.UUID(current_user.id)
+    pid = as_uuid(current_user.id)
     success, message, status_code = _leave_series(sid, pid)
     if success and sid in current_user.sids: current_user.sids.remove(sid)
     return jsonify({"success": success, "message": message}), status_code

@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import (
-    env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
 )
 from hypogeum.vomitoria import (
     flag_hash, series_signup_required, admin_required, flag_hash, cooldown_check
@@ -174,7 +174,7 @@ def control_challenge_instance(sid: int, cid: int):
     if data is None:
         data = request.form.to_dict()
     action = str(data.get("action")).lower()
-    pid = uuid.UUID(current_user.id)
+    pid = as_uuid(current_user.id)
     
     success, message, status_code = _control_instance(sid, cid, pid, action)
     return jsonify({"success": success, "message": message}), status_code
@@ -384,7 +384,7 @@ def _get_submissions(sid: int, cid: int, pid: uuid.UUID) -> tuple[list, bool, st
 @login_required
 @series_signup_required
 def get_submissions(sid: int, cid: int):
-    pid = uuid.UUID(current_user.id)
+    pid = as_uuid(current_user.id)
     entries, success, message, status_code = _get_submissions(sid, cid, pid)
     return jsonify({"success": success, "message": message, "submissions": entries}), status_code
 
