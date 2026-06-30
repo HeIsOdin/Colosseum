@@ -145,6 +145,8 @@ def flag_hash(flag: str) -> str:
     Returns:
         str: The resulting hash of the flag.
     """
+    flag = flag.strip()
+    if not flag: raise ValueError("Flag must not be empty.")
     pepper = env('COLOSSEUM_FLAG_PEPPER')[0].encode('utf-8')
     return hmac.new(pepper, flag.encode('utf-8'), hashlib.sha256).hexdigest()
 
