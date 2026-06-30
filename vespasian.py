@@ -185,6 +185,7 @@ def _create_challenge_solves_table(cursor: psycopg2.extensions.cursor) -> None:
     series_table = env('POSTGRESQL_SERIES_TABLE')[0]
     user_table = env('POSTGRESQL_USER_TABLE')[0]
     challenges_table = env('POSTGRESQL_CHALLENGES_TABLE')[0]
+    submissions_table = env('POSTGRESQL_SUBMISSIONS_TABLE')[0]
 
     cursor.execute(
         sql.SQL("""
@@ -201,7 +202,8 @@ def _create_challenge_solves_table(cursor: psycopg2.extensions.cursor) -> None:
             sql.Identifier(table_name),
             sql.Identifier(series_table),
             sql.Identifier(user_table),
-            sql.Identifier(challenges_table)
+            sql.Identifier(challenges_table),
+            sql.Identifier(submissions_table)
         )
     )
 
