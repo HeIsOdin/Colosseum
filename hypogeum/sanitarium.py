@@ -37,11 +37,9 @@ def health_check():
     """
     logger = logging.getLogger(__name__)
     try:
-        table = env('POSTGRESQL_SERIES_TABLE')[0]
-        query = sql.SQL("SELECT 1 FROM {table} LIMIT 1").format(table=sql.Identifier(table))
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(query)
+                cursor.execute("SELECT 1")
                 db_status = cursor.fetchone()
                 if db_status is None or db_status[0] != 1:
                     logger.error(f"Database health check failed: {db_status}")
