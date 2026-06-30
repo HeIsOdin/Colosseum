@@ -87,6 +87,7 @@ def _get_series_data(sid: int) -> tuple[dict, bool, str, int]:
                             'avatar', u.avatar,
                             'solved_at', s.solved_at
                         )
+                        ORDER BY s.solved_at ASC
                     ) FILTER (WHERE s.pid IS NOT NULL),
                     '[]'
                 ) AS solvers
