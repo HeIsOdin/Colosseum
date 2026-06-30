@@ -75,6 +75,9 @@ def _update_profile(pid: uuid.UUID, **profile):
                 cursor.execute(query, (*profile.values(), pid))
         logger.debug(f"User {pid} profile updated successfully.")
         return True, "Profile updated successfully.", 200
+    except ValueError as ve:
+        logger.debug(f"Validation error in profile update for user {pid}: {ve}")
+        return False, str(ve), 400
     except Exception as e:
         logger.exception(f"Error during profile update for user {pid}: {e}")
         return False, "Internal server error", 500
