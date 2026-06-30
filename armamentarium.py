@@ -90,12 +90,12 @@ def raise_on_missing_series_and_challenges(redis_client: redis.Redis, sid_str: i
     cid = str(cid_str) if cid_str is not None else None
     
     raw = redis_client.get(f"{key_prefix}:series_and_challenges")
-    if not raw: raise Exception("Series and challenges data is missing. Please refresh the data.")
+    if not raw: raise ValueError("Series and challenges data is missing. Please refresh the data.")
     
     data = json.loads(raw)
     sids = data['sids']
-    if sid not in sids: raise Exception(f"Series {sid} is missing. Please refresh the data. {data}")
+    if sid not in sids: raise ValueError(f"Series {sid} is missing. Please refresh the data. {data}")
     
     if cid is None: return  # No challenge ID to check, return early
     cids = sids[sid]["cids"]
-    if cid not in cids: raise Exception(f"Challenge {cid} is missing for Series {sid}. Please refresh the data. {data}")
+    if cid not in cids: raise ValueError(f"Challenge {cid} is missing for Series {sid}. Please refresh the data. {data}")
