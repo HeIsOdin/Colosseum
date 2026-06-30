@@ -77,28 +77,24 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
         ).format(series_table=series_table)
 
         challenges_query = sql.SQL("""
-            SELECT
-                c.cid, c.title, c.description, c.points, c.category,
-                c.difficulty, c.prerequisite,
-                COALESCE(
-                    json_agg(
-                        json_build_object(
-                            'display_name', u.display_name,
-                            'avatar', u.avatar,
-                            'solved_at', s.solved_at
-                        )
-                        ORDER BY s.solved_at ASC
-                    ) FILTER (WHERE s.pid IS NOT NULL),
-                    '[]'
-                ) AS solvers
-            FROM {c_table} c
-            LEFT JOIN {s_table} s ON c.cid = s.cid AND s.sid = %s
-            LEFT JOIN {u_table} u ON s.pid = u.pid
-            WHERE c.sid = %s
-            GROUP BY c.cid, c.title, c.description, c.points, c.category,
-                     c.difficulty, c.prerequisite
+            SELECT c.cid, c.title, c.description, c.points, c.category, c.difficulty, c.prerequisite,
+            COALESCE(
+                (
+                SELECT json_agg(
+                    json_build_object(
+                        'display_name', u.display_name,
+                        'avatar', u.avatar,
+                        'solved_at', limited_solves.solved_at
+                    )
+                )
+                FROM (SELECT pid, solved_at
+                    FROM {s_table} WHERE cid = c.cid AND sid = %s
+                    ORDER BY solved_at ASC LIMIT %s OFFSET %s
+                ) AS limited_solves
+                LEFT JOIN {u_table} u ON limited_solves.pid = u.pid
+            ), '[]') AS solvers
+            FROM {c_table} c WHERE c.sid = %s
             ORDER BY c.points DESC, c.cid ASC
-            OFFSET %s LIMIT %s
         """).format(
             c_table=challenges_table,
             s_table=solves_table,
