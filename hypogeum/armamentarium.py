@@ -10,9 +10,9 @@ def as_uuid(value) -> uuid.UUID:
     Convert a string or UUID to a UUID object.
 
     Args:
-        - value (str | uuid.UUID): The value to convert.
+        - value (str | uuid.UUID) : The value to convert.
     Returns:
-        - uuid.UUID: The converted UUID object.
+        uuid.UUID: The converted UUID object.
     """
     if isinstance(value, uuid.UUID):
         return value
