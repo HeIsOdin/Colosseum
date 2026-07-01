@@ -137,17 +137,6 @@ function LandingPage() {
   return (
     <Shell>
       <section className="events-page">
-        <div className="events-headline">
-          <div>
-            <p className="eyebrow">Harena</p>
-            <h1>Series</h1>
-          </div>
-          <p>
-            Browse active campaigns, join the arena, and enter series built from recovered files,
-            live services, and locked challenge paths.
-          </p>
-        </div>
-
         <div className="events-tabs" role="tablist" aria-label="Series filters">
           {seriesTabs.map((tab) => (
             <button
@@ -163,7 +152,7 @@ function LandingPage() {
         </div>
 
         <label className="series-search">
-          <Search size={18} />
+          <Search size={17} />
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -187,7 +176,7 @@ function LandingPage() {
 
         {!isLoading && !error && filteredSeries.length === 0 ? (
           <div className="empty-state">
-            <ArchiveIcon />
+            <Shield size={28} />
             <h2>No series found</h2>
             <p>
               {activeTab === "joined"
@@ -207,7 +196,7 @@ function SeriesEventCard({ series, joined, loggedIn }: { series: SeriesSummary; 
   const hasImage = Boolean(series.image);
   const cardStyle: CSSProperties = hasImage
     ? {
-        backgroundImage: `linear-gradient(90deg, rgba(11,7,5,0.96) 0%, rgba(11,7,5,0.84) 37%, rgba(11,7,5,0.32) 100%), url(${series.image})`,
+        backgroundImage: `linear-gradient(90deg, rgba(18,12,8,0.96) 0%, rgba(18,12,8,0.84) 38%, rgba(18,12,8,0.24) 100%), url(${series.image})`,
       }
     : {};
 
@@ -627,10 +616,6 @@ function AdminPage() {
       </section>
     </Shell>
   );
-}
-
-function ArchiveIcon() {
-  return <Shield size={34} />;
 }
 
 function LoadingCard({ label }: { label: string }) {
