@@ -34,6 +34,7 @@ def _create_db_admin_and_user(conn: psycopg2.extensions.connection, r: redis.Red
 
         r_user, r_pass, key_prefix = env('REDIS_USER,REDIS_PASSWD,REDIS_KEY_PREFIX')
         r.execute_command("ACL", "SETUSER", r_user, 'on', f'>{r_pass}', f'~{key_prefix}*', '&*', '+@all')
+        r.execute_command("ACL", "SAVE")
 
         cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database,),)
 
