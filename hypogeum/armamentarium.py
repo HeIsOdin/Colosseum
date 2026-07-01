@@ -33,7 +33,7 @@ def redis_connect(decode: bool = True) -> redis.Redis:
     Normalize the Redis URL for Flask-Session configuration.
     
     Returns:
-        str: A normalized Redis URL in the format `redis://user:password@host:port/`
+        redis.Redis: A Redis client instance.
     """
     host = env('REDIS_HOST', 'localhost:6379')[0]
     user, passwd = env('REDIS_USER,REDIS_PASSWD')
