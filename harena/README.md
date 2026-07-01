@@ -1,6 +1,6 @@
-# Hypogeum Frontend
+# Harena
 
-A Vite + React + TypeScript frontend shell for the Hypogeum CTF platform.
+Harena is the React frontend for Hypogeum. The name means arena sand, and this app is the player-facing arena where series are listed, joined, and entered.
 
 ## Stack
 
@@ -11,6 +11,17 @@ A Vite + React + TypeScript frontend shell for the Hypogeum CTF platform.
 - Zod for API response validation
 - Radix Dialog for the challenge interaction drawer
 - Custom CSS/SVG visual system
+
+## Current visual direction
+
+The homepage follows an event-list layout inspired by capture-event dashboards:
+
+- dark Roman brown/black theme
+- bronze/gold borders and action buttons
+- top tabs for Ongoing, Upcoming, Joined, and Past
+- search over series title and description
+- horizontal series cards with image backgrounds when available
+- minimal dark bronze gradient fallback when a series has no image
 
 ## Local development
 
@@ -49,4 +60,4 @@ The API client normalizes both shapes.
 
 ## Campaign model
 
-This first pass keeps campaign modules local. `src/campaigns.tsx` maps series content to a campaign skin. Biafra receives a distinct archival dossier tone while the Hypogeum shell owns auth, routing, API calls, challenge interaction, and admin forms.
+This first pass keeps campaign modules local. `src/campaigns.tsx` maps series content to a campaign skin. Biafra receives an archival dossier tone while the Hypogeum shell owns auth, routing, API calls, challenge interaction, and admin forms.
