@@ -84,24 +84,26 @@ function Shell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <Link to="/" className="brand" aria-label="Colosseum home">
-          Colosseum
-        </Link>
-        <div className="session-box">
-          {auth.status === "loading" ? (
-            <span className="muted inline-status"><Loader2 size={15} className="spin" />Checking session</span>
-          ) : auth.user ? (
-            <AccountMenu onLogout={logoutAndRedirect} />
-          ) : (
-            <Link className="profile-trigger" to="/auth" aria-label="Login or register">
-              <UserRound size={22} />
-            </Link>
-          )}
+    <div className="page-shell">
+      <header className="site-header">
+        <div className="topbar">
+          <Link to="/" className="brand" aria-label="Colosseum home">
+            Colosseum
+          </Link>
+          <div className="session-box">
+            {auth.status === "loading" ? (
+              <span className="muted inline-status"><Loader2 size={15} className="spin" />Checking session</span>
+            ) : auth.user ? (
+              <AccountMenu onLogout={logoutAndRedirect} />
+            ) : (
+              <Link className="profile-trigger" to="/auth" aria-label="Login or register">
+                <UserRound size={22} />
+              </Link>
+            )}
+          </div>
         </div>
       </header>
-      <main>{children}</main>
+      <main className="app-shell">{children}</main>
     </div>
   );
 }
@@ -223,7 +225,7 @@ function SeriesEventCard({ series, joined, loggedIn }: { series: SeriesSummary; 
   const hasImage = Boolean(series.image);
   const cardStyle: CSSProperties = hasImage
     ? {
-        backgroundImage: `linear-gradient(90deg, rgba(18,12,8,0.96) 0%, rgba(18,12,8,0.84) 38%, rgba(18,12,8,0.24) 100%), url(${series.image})`,
+        backgroundImage: `linear-gradient(90deg, rgba(8,13,22,0.96) 0%, rgba(8,13,22,0.84) 38%, rgba(8,13,22,0.24) 100%), url(${series.image})`,
       }
     : {};
 
