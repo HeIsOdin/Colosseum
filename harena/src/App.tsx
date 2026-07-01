@@ -25,7 +25,6 @@ import clsx from "clsx";
 import { api, ApiError, type Challenge, type SeriesData, type SeriesSummary } from "./api";
 import { useAuth } from "./auth";
 import { getCampaignModule } from "./campaigns";
-import hypogeumMark from "./assets/hypogeum-mark.svg";
 import biafraDossier from "./assets/biafra-dossier.svg";
 
 type SeriesFilter = "ongoing" | "upcoming" | "joined" | "past";
@@ -79,37 +78,65 @@ function Shell({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
   const navigate = useNavigate();
 
+  async function logoutAndRedirect() {
+    await auth.logout();
+    navigate("/");
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
-        <Link to="/" className="brand" aria-label="Hypogeum home">
-          <img src={hypogeumMark} alt="" />
-          <span>Hypogeum</span>
+        <Link to="/" className="brand" aria-label="Colosseum home">
+          Colosseum
         </Link>
-        <nav className="navlinks">
-          <Link to="/">Series</Link>
-          {auth.user ? <Link to="/profile">Profile</Link> : null}
-          {auth.user?.is_admin ? <Link to="/admin">Admin</Link> : null}
-        </nav>
         <div className="session-box">
           {auth.status === "loading" ? (
             <span className="muted inline-status"><Loader2 size={15} className="spin" />Checking session</span>
           ) : auth.user ? (
-            <button
-              className="ghost-button compact"
-              onClick={async () => {
-                await auth.logout();
-                navigate("/");
-              }}
-            >
-              <LogOut size={16} /> Logout
-            </button>
+            <AccountMenu onLogout={logoutAndRedirect} />
           ) : (
-            <Link className="solid-button compact" to="/auth">Enter</Link>
+            <Link className="profile-trigger" to="/auth" aria-label="Login or register">
+              <UserRound size={22} />
+            </Link>
           )}
         </div>
       </header>
       <main>{children}</main>
+    </div>
+  );
+}
+
+function AccountMenu({ onLogout }: { onLogout: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="account-menu">
+      <button
+        className="profile-trigger"
+        type="button"
+        aria-label="Open profile menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <UserRound size={22} />
+      </button>
+      {open ? (
+        <div className="profile-dropdown" role="menu">
+          <Link to="/profile" role="menuitem" onClick={() => setOpen(false)}>
+            <UserRound size={16} /> Profile
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={async () => {
+              setOpen(false);
+              await onLogout();
+            }}
+          >
+            <LogOut size={16} /> Logout
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -263,7 +290,7 @@ function AuthPage() {
           <p className="eyebrow">Access Vestibule</p>
           <h1>{mode === "login" ? "Return to the arena." : "Request entry."}</h1>
           <p>
-            Sessions are server-backed. The browser keeps only the visible identity details returned by Hypogeum.
+            Sessions are server-backed. The browser keeps only the visible identity details returned by Colosseum.
           </p>
         </div>
         <form className="form-card" onSubmit={onSubmit}>
@@ -460,7 +487,7 @@ function ChallengeDialog({
                 <p>{challenge.description}</p>
                 <div className="challenge-badges wide">
                   <span>{challenge.points} points</span>
-                  <span>Author: {challenge.author || "Hypogeum"}</span>
+                  <span>Author: {challenge.author || "Colosseum"}</span>
                   <span>{challenge.solvers.length} solves</span>
                 </div>
 
@@ -563,7 +590,7 @@ function AdminPage() {
     mutationFn: (form: FormData) => api.createChallenge(Number(form.get("sid")), {
       title: String(form.get("title") || ""),
       description: String(form.get("description") || ""),
-      author: String(form.get("author") || "Hypogeum"),
+      author: String(form.get("author") || "Colosseum"),
       points: Number(form.get("points") || 0),
       category: String(form.get("category") || "Misc"),
       difficulty: String(form.get("difficulty") || "Easy"),
@@ -600,7 +627,7 @@ function AdminPage() {
           <label>Series ID<input name="sid" type="number" required /></label>
           <label>Title<input name="title" required /></label>
           <label>Description<textarea name="description" required /></label>
-          <label>Author<input name="author" defaultValue="Hypogeum" required /></label>
+          <label>Author<input name="author" defaultValue="Colosseum" required /></label>
           <label>Points<input name="points" type="number" min="0" defaultValue="100" required /></label>
           <div className="split-fields">
             <label>Category<select name="category" defaultValue="Misc"><option>Warmup</option><option>Web</option><option>Crypto</option><option>Forensics</option><option>Pwn</option><option>Misc</option></select></label>
