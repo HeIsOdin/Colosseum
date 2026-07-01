@@ -2,7 +2,7 @@ from . import login_manager, REDIS_CLIENT
 from flask import Flask
 from flask_session import Session
 from psycopg2 import extras
-from hypogeum.armamentarium import env, refresh_series_and_challenges
+from hypogeum.armamentarium import env, refresh_series_and_challenges, redis_connect
 from hypogeum.vomitoria import vomitoria_bp
 from hypogeum.auctoramentum import auctoramentum_bp
 from hypogeum.gladiator import gladiator_bp
@@ -12,7 +12,7 @@ from hypogeum.pugna import pugna_bp
 def configure_app(app: Flask) -> None:
     app.config['SECRET_KEY'] = env('COLOSSEUM_SECRET_KEY')[0]
     app.config['SESSION_TYPE'] = 'redis'
-    app.config['SESSION_REDIS'] = REDIS_CLIENT
+    app.config['SESSION_REDIS'] = redis_connect(False)
     app.config['SESSION_KEY_PREFIX'] = env('REDIS_KEY_PREFIX')[0]
     app.config['SESSION_PERMANENT'] = False
     app.config['SESSION_USE_SIGNER'] = True

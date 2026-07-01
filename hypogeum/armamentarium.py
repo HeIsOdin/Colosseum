@@ -28,7 +28,7 @@ def db_connect() -> psycopg2.extensions.connection:
     }
     return psycopg2.connect(**db)
 
-def redis_connect() -> redis.Redis:
+def redis_connect(decode: bool = True) -> redis.Redis:
     """
     Normalize the Redis URL for Flask-Session configuration.
     
@@ -37,7 +37,7 @@ def redis_connect() -> redis.Redis:
     """
     host = env('REDIS_HOST', 'localhost:6379')[0]
     user, passwd = env('REDIS_USER,REDIS_PASSWD')
-    return redis.from_url(f"redis://{user}:{passwd}@{host}/0", decode_responses=True)
+    return redis.from_url(f"redis://{user}:{passwd}@{host}/0", decode_responses=decode)
 
 def env(keys: str, defaults: str = '', delimiter: str = ",") -> tuple[str, ...]:
     """
