@@ -1,10 +1,10 @@
-import { type FormEvent, useMemo, useState } from "react";
+import { type CSSProperties, type FormEvent, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
-  Archive,
   ArrowRight,
+  CalendarDays,
   CheckCircle2,
   Download,
   Flag,
@@ -16,19 +16,27 @@ import {
   Plus,
   Radio,
   RotateCcw,
+  Search,
   Shield,
   Square,
-  Swords,
   UserRound,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, ApiError, type Challenge, type SeriesData } from "./api";
+import { api, ApiError, type Challenge, type SeriesData, type SeriesSummary } from "./api";
 import { useAuth } from "./auth";
 import { getCampaignModule } from "./campaigns";
 import hypogeumMark from "./assets/hypogeum-mark.svg";
-import arenaGate from "./assets/arena-gate.svg";
 import biafraDossier from "./assets/biafra-dossier.svg";
-import signalLines from "./assets/signal-lines.svg";
+
+type SeriesFilter = "ongoing" | "upcoming" | "joined" | "past";
+type SeriesState = "ongoing" | "upcoming" | "past";
+
+const seriesTabs: Array<{ key: SeriesFilter; label: string }> = [
+  { key: "ongoing", label: "Ongoing" },
+  { key: "upcoming", label: "Upcoming" },
+  { key: "joined", label: "Joined" },
+  { key: "past", label: "Past" },
+];
 
 function formatDate(value?: string | null) {
   if (!value) return "Open-ended";
@@ -37,6 +45,28 @@ function formatDate(value?: string | null) {
     day: "numeric",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function formatRange(series: Pick<SeriesSummary, "starts_at" | "ends_at">) {
+  return `${formatDate(series.starts_at)} - ${formatDate(series.ends_at)}`;
+}
+
+function getSeriesState(series: Pick<SeriesSummary, "starts_at" | "ends_at">): SeriesState {
+  const now = Date.now();
+  const starts = new Date(series.starts_at).getTime();
+  const ends = series.ends_at ? new Date(series.ends_at).getTime() : null;
+
+  if (starts > now) return "upcoming";
+  if (ends !== null && ends <= now) return "past";
+  return "ongoing";
+}
+
+function getActionLabel(series: SeriesSummary, joined: boolean, loggedIn: boolean) {
+  const state = getSeriesState(series);
+  if (state === "past") return "View Archive";
+  if (state === "upcoming") return "View Briefing";
+  if (!loggedIn) return "View Series";
+  return joined ? "Enter Arena" : "Join Series";
 }
 
 function errorMessage(error: unknown) {
@@ -66,7 +96,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             <span className="muted inline-status"><Loader2 size={15} className="spin" />Checking session</span>
           ) : auth.user ? (
             <button
-              className="ghost-button"
+              className="ghost-button compact"
               onClick={async () => {
                 await auth.logout();
                 navigate("/");
@@ -75,7 +105,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               <LogOut size={16} /> Logout
             </button>
           ) : (
-            <Link className="solid-button small" to="/auth">Enter</Link>
+            <Link className="solid-button compact" to="/auth">Enter</Link>
           )}
         </div>
       </header>
@@ -85,62 +115,122 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function LandingPage() {
-  const { data: series, isLoading, error } = useQuery({
+  const auth = useAuth();
+  const [activeTab, setActiveTab] = useState<SeriesFilter>("ongoing");
+  const [search, setSearch] = useState("");
+  const { data: series = [], isLoading, error } = useQuery({
     queryKey: ["series"],
     queryFn: api.listSeries,
   });
 
+  const filteredSeries = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return series.filter((entry) => {
+      const joined = Boolean(auth.user?.sids.includes(entry.sid));
+      const state = getSeriesState(entry);
+      const matchesTab = activeTab === "joined" ? joined : state === activeTab;
+      const matchesSearch = !query || `${entry.title} ${entry.description}`.toLowerCase().includes(query);
+      return matchesTab && matchesSearch;
+    });
+  }, [activeTab, auth.user?.sids, search, series]);
+
   return (
     <Shell>
-      <section className="hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Underground Arena</p>
-          <h1>Enter the Hypogeum.</h1>
-          <p>
-            A custom campaign-based CTF platform where each series opens like a gate beneath the arena: files,
-            services, locked paths, and flags hidden behind deliberate mechanisms.
-          </p>
-          <div className="hero-actions">
-            <a href="#series" className="solid-button"><Swords size={17} /> View Series</a>
-            <Link to="/auth" className="ghost-button"><KeyRound size={17} /> Login / Register</Link>
+      <section className="events-page">
+        <div className="events-headline">
+          <div>
+            <p className="eyebrow">Harena</p>
+            <h1>Series</h1>
           </div>
+          <p>
+            Browse active campaigns, join the arena, and enter series built from recovered files,
+            live services, and locked challenge paths.
+          </p>
         </div>
-        <div className="hero-art" aria-hidden="true">
-          <img src={arenaGate} alt="" />
-          <img className="signal-overlay" src={signalLines} alt="" />
-        </div>
-      </section>
 
-      <section id="series" className="section-panel">
-        <div className="section-heading">
-          <p className="eyebrow">Campaign Gates</p>
-          <h2>Series</h2>
+        <div className="events-tabs" role="tablist" aria-label="Series filters">
+          {seriesTabs.map((tab) => (
+            <button
+              key={tab.key}
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              className={clsx(activeTab === tab.key && "active")}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
+
+        <label className="series-search">
+          <Search size={18} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search series"
+          />
+        </label>
+
         {isLoading ? <LoadingCard label="Loading series" /> : null}
         {error ? <ErrorCard message={errorMessage(error)} /> : null}
-        <div className="series-grid">
-          {series?.map((entry) => {
-            const campaign = getCampaignModule(entry as SeriesData);
-            return (
-              <Link className="series-card" key={entry.sid} to={`/series/${entry.sid}`}>
-                <div className="series-card-art">
-                  <img src={entry.image || biafraDossier} alt="" />
-                </div>
-                <div>
-                  <p className="eyebrow">{campaign.eyebrow}</p>
-                  <h3>{entry.title}</h3>
-                  <p>{entry.description}</p>
-                </div>
-                <div className="card-footer">
-                  <span>{formatDate(entry.starts_at)} → {formatDate(entry.ends_at)}</span>
-                  <ArrowRight size={18} />
-                </div>
-              </Link>
-            );
-          })}
+
+        <div className="event-list">
+          {filteredSeries.map((entry) => (
+            <SeriesEventCard
+              key={entry.sid}
+              series={entry}
+              joined={Boolean(auth.user?.sids.includes(entry.sid))}
+              loggedIn={Boolean(auth.user)}
+            />
+          ))}
         </div>
+
+        {!isLoading && !error && filteredSeries.length === 0 ? (
+          <div className="empty-state">
+            <ArchiveIcon />
+            <h2>No series found</h2>
+            <p>
+              {activeTab === "joined"
+                ? "You have not joined any matching series yet."
+                : "No series match this filter or search."}
+            </p>
+          </div>
+        ) : null}
       </section>
     </Shell>
+  );
+}
+
+function SeriesEventCard({ series, joined, loggedIn }: { series: SeriesSummary; joined: boolean; loggedIn: boolean }) {
+  const campaign = getCampaignModule(series as SeriesData);
+  const state = getSeriesState(series);
+  const hasImage = Boolean(series.image);
+  const cardStyle: CSSProperties = hasImage
+    ? {
+        backgroundImage: `linear-gradient(90deg, rgba(11,7,5,0.96) 0%, rgba(11,7,5,0.84) 37%, rgba(11,7,5,0.32) 100%), url(${series.image})`,
+      }
+    : {};
+
+  return (
+    <article className={clsx("event-card", !hasImage && "no-image")} style={cardStyle}>
+      <div className="event-copy">
+        <div className="event-kicker-row">
+          <span className={clsx("status-pill", state, joined && "joined")}>{joined ? "Joined" : state}</span>
+          <span className="campaign-pill">{campaign.eyebrow}</span>
+        </div>
+        <h2>{series.title}</h2>
+        <p>{series.description}</p>
+        <div className="event-meta">
+          <span><CalendarDays size={15} /> {formatRange(series)}</span>
+          <span>{joined ? "You are enlisted" : "Open for challengers"}</span>
+        </div>
+      </div>
+      <div className="event-action">
+        <Link className="solid-button event-button" to={`/series/${series.sid}`}>
+          {getActionLabel(series, joined, loggedIn)} <ArrowRight size={17} />
+        </Link>
+      </div>
+    </article>
   );
 }
 
@@ -268,7 +358,7 @@ function SeriesArenaPage() {
               </div>
             </div>
             <div className="join-panel">
-              <img src={biafraDossier} alt="" />
+              <img src={series.image || biafraDossier} alt="" />
               {auth.user ? (
                 member ? (
                   <button className="ghost-button" onClick={() => leaveMutation.mutate()} disabled={leaveMutation.isPending}>Leave series</button>
@@ -375,7 +465,7 @@ function ChallengeDialog({
                   <p className="eyebrow">{challenge.category} / {challenge.difficulty}</p>
                   <Dialog.Title>{challenge.title}</Dialog.Title>
                 </div>
-                <Dialog.Close className="ghost-button small">Close</Dialog.Close>
+                <Dialog.Close className="ghost-button compact">Close</Dialog.Close>
               </div>
               <div className="challenge-body">
                 <p>{challenge.description}</p>
@@ -400,9 +490,9 @@ function ChallengeDialog({
                   <div className="instance-panel">
                     <h4><Radio size={18} /> Instance control</h4>
                     <div className="button-row">
-                      <button className="solid-button small" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("start")}><Play size={15} /> Start</button>
-                      <button className="ghost-button small" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("restart")}><RotateCcw size={15} /> Restart</button>
-                      <button className="ghost-button small" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("stop")}><Square size={15} /> Stop</button>
+                      <button className="solid-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("start")}><Play size={15} /> Start</button>
+                      <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("restart")}><RotateCcw size={15} /> Restart</button>
+                      <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("stop")}><Square size={15} /> Stop</button>
                     </div>
                   </div>
                 ) : null}
@@ -537,6 +627,10 @@ function AdminPage() {
       </section>
     </Shell>
   );
+}
+
+function ArchiveIcon() {
+  return <Shield size={34} />;
 }
 
 function LoadingCard({ label }: { label: string }) {
