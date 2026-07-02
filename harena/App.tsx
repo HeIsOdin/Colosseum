@@ -2,12 +2,16 @@ import { type CSSProperties, type FormEvent, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ArrowRight,
   CalendarDays,
   CheckCircle2,
   Download,
+  ExternalLink,
   Flag,
+  Globe2,
   KeyRound,
   Loader2,
   Lock,
@@ -22,7 +26,15 @@ import {
   UserRound,
 } from "lucide-react";
 import clsx from "clsx";
-import { api, ApiError, type Challenge, type SeriesData, type SeriesSummary } from "./api";
+import {
+  api,
+  ApiError,
+  type Challenge,
+  type SeriesData,
+  type SeriesMetadata,
+  type SeriesOverview,
+  type SeriesSummary,
+} from "./api";
 import { useAuth } from "./auth";
 import { getCampaignModule } from "./campaigns";
 import biafraDossier from "./assets/biafra-dossier.svg";
@@ -64,7 +76,7 @@ function getSeriesState(series: Pick<SeriesSummary, "starts_at" | "ends_at">): S
 
 function getActionLabel(series: SeriesSummary, joined: boolean, loggedIn: boolean) {
   const state = getSeriesState(series);
-  if (state === "past") return "View Archive";
+  if (state === "past") return "Reminisce";
   if (state === "upcoming") return "View Briefing";
   if (!loggedIn) return "View Series";
   return joined ? "Continue Series" : "Join Series";
@@ -74,6 +86,61 @@ function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return "Something went wrong.";
+}
+
+function formatDuration(ms: number) {
+  if (ms <= 0) return "Now";
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const parts = [
+    days > 0 ? `${days}d` : null,
+    hours > 0 ? `${hours}h` : null,
+    minutes > 0 ? `${minutes}m` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" ") : "Less than 1m";
+}
+
+function getCountdownText(series: Pick<SeriesOverview, "starts_at" | "ends_at">) {
+  const now = Date.now();
+  const starts = new Date(series.starts_at).getTime();
+  const ends = series.ends_at ? new Date(series.ends_at).getTime() : null;
+
+  if (starts > now) return `Starts in ${formatDuration(starts - now)}`;
+  if (ends !== null && ends > now) return `Ends in ${formatDuration(ends - now)}`;
+  if (ends !== null && ends <= now) return "Series concluded";
+  return "Live now";
+}
+
+function formatMetadataValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "bigint") return String(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) {
+    const rendered = value.map(formatMetadataValue).filter(Boolean).join(", ");
+    return rendered || null;
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function getSpecificationEntries(metadata: SeriesMetadata) {
+  return Object.entries(metadata)
+    .map(([key, value]) => [key, formatMetadataValue(value)] as const)
+    .filter((entry): entry is readonly [string, string] => Boolean(entry[1]));
+}
+
+function parseMetadataJson(raw: string): Record<string, unknown> {
+  if (!raw.trim()) return {};
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Metadata must be a JSON object.");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -247,6 +314,123 @@ function SeriesEventCard({ series, joined, loggedIn }: { series: SeriesSummary; 
   );
 }
 
+function SeriesOverviewPage() {
+  const { sid: sidParam } = useParams();
+  const sid = Number(sidParam);
+  const auth = useAuth();
+  const queryClient = useQueryClient();
+
+  const overviewQuery = useQuery({
+    queryKey: ["series-overview", sid],
+    queryFn: () => api.getSeriesOverview(sid),
+    enabled: Number.isFinite(sid),
+  });
+
+  const joinMutation = useMutation({
+    mutationFn: () => api.joinSeries(sid),
+    onSuccess: async () => {
+      await auth.refresh();
+      await queryClient.invalidateQueries({ queryKey: ["series-overview", sid] });
+      await queryClient.invalidateQueries({ queryKey: ["series", sid] });
+    },
+  });
+
+  const overview = overviewQuery.data;
+  const member = auth.isMemberOf(sid);
+  const specifications = overview ? getSpecificationEntries(overview.metadata) : [];
+  const hostUrl = overview?.host.url?.trim();
+  const state = overview ? getSeriesState(overview) : "ongoing";
+
+  return (
+    <Shell>
+      {overviewQuery.isLoading ? <LoadingCard label="Opening overview" /> : null}
+      {overviewQuery.error ? <ErrorCard message={errorMessage(overviewQuery.error)} /> : null}
+      {overview ? (
+        <section className="series-overview-page">
+          <div className="overview-visual">
+            {overview.image ? <img src={overview.image} alt="" /> : <div className="overview-fallback" />}
+          </div>
+
+          <div className="overview-heading-row">
+            <div>
+              <h1>{overview.title}</h1>
+              <div className="overview-date-grid">
+                <div className="overview-date-card">
+                  <span>Start date</span>
+                  <strong><CalendarDays size={17} /> {formatDate(overview.starts_at)}</strong>
+                </div>
+                <div className="overview-date-card">
+                  <span>End date</span>
+                  <strong><CalendarDays size={17} /> {formatDate(overview.ends_at)}</strong>
+                </div>
+              </div>
+            </div>
+            <div className="overview-actions">
+              <div className="countdown-card">{getCountdownText(overview)}</div>
+              {state === "past" ? (
+                <button className="ghost-button" disabled>Reminisce</button>
+              ) : auth.user ? (
+                member ? (
+                  <Link className="solid-button" to={`/series/${sid}/arena`}>Continue Series <ArrowRight size={17} /></Link>
+                ) : (
+                  <button className="solid-button" onClick={() => joinMutation.mutate()} disabled={joinMutation.isPending}>
+                    {joinMutation.isPending ? <Loader2 className="spin" size={17} /> : null}
+                    Join Series
+                  </button>
+                )
+              ) : (
+                <Link className="solid-button" to="/auth">Login to Join</Link>
+              )}
+            </div>
+          </div>
+
+          <div className="overview-layout">
+            <article className="overview-main">
+              <h2>About the Series</h2>
+              <div className="markdown-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{overview.description}</ReactMarkdown>
+              </div>
+            </article>
+
+            <aside className="overview-sidebar">
+              <section className="sidebar-card">
+                <h3>Hosted by</h3>
+                <div className="host-row">
+                  <div className="host-icon"><Shield size={18} /></div>
+                  <div>
+                    <strong>{overview.host.name}</strong>
+                    {hostUrl ? (
+                      <a href={hostUrl} target="_blank" rel="noreferrer">
+                        Visit host <ExternalLink size={14} />
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </section>
+
+              <section className="sidebar-card">
+                <h3>Specifications</h3>
+                {specifications.length > 0 ? (
+                  <dl className="spec-list">
+                    {specifications.map(([key, value]) => (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd><Globe2 size={16} /> {value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className="muted">No specifications have been added yet.</p>
+                )}
+              </section>
+            </aside>
+          </div>
+        </section>
+      ) : null}
+    </Shell>
+  );
+}
+
 function AuthPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -319,7 +503,7 @@ function SeriesArenaPage() {
   const seriesQuery = useQuery({
     queryKey: ["series", sid],
     queryFn: () => api.getSeries(sid),
-    enabled: Number.isFinite(sid),
+    enabled: Number.isFinite(sid) && auth.status === "authenticated",
   });
 
   const playerQuery = useQuery({
@@ -353,9 +537,11 @@ function SeriesArenaPage() {
   const campaign = getCampaignModule(series);
   const member = auth.isMemberOf(sid);
 
+  if (auth.status === "anonymous") return <Navigate to="/auth" replace />;
+
   return (
     <Shell>
-      {seriesQuery.isLoading ? <LoadingCard label="Opening series" /> : null}
+      {seriesQuery.isLoading || auth.status === "loading" ? <LoadingCard label="Opening arena" /> : null}
       {seriesQuery.error ? <ErrorCard message={errorMessage(seriesQuery.error)} /> : null}
       {series ? (
         <>
@@ -372,15 +558,12 @@ function SeriesArenaPage() {
             </div>
             <div className="join-panel">
               <img src={series.image || biafraDossier} alt="" />
-              {auth.user ? (
-                member ? (
-                  <button className="ghost-button" onClick={() => leaveMutation.mutate()} disabled={leaveMutation.isPending}>Leave series</button>
-                ) : (
-                  <button className="solid-button" onClick={() => joinMutation.mutate()} disabled={joinMutation.isPending}>Join series</button>
-                )
+              {member ? (
+                <button className="ghost-button" onClick={() => leaveMutation.mutate()} disabled={leaveMutation.isPending}>Leave series</button>
               ) : (
-                <Link className="solid-button" to="/auth">Login to play</Link>
+                <button className="solid-button" onClick={() => joinMutation.mutate()} disabled={joinMutation.isPending}>Join series</button>
               )}
+              <Link className="ghost-button" to={`/series/${sid}`}>Overview</Link>
             </div>
           </section>
 
@@ -572,13 +755,20 @@ function AdminPage() {
   const [challengeStatus, setChallengeStatus] = useState<string | null>(null);
 
   const createSeries = useMutation({
-    mutationFn: (form: FormData) => api.createSeries({
-      title: String(form.get("title") || ""),
-      description: String(form.get("description") || ""),
-      starts_at: String(form.get("starts_at") || ""),
-      ends_at: String(form.get("ends_at") || ""),
-      image: String(form.get("image") || ""),
-    }),
+    mutationFn: (form: FormData) => {
+      const hostName = String(form.get("host_name") || "").trim();
+      const hostUrl = String(form.get("host_url") || "").trim();
+      const metadata = parseMetadataJson(String(form.get("metadata") || "{}"));
+      return api.createSeries({
+        title: String(form.get("title") || ""),
+        description: String(form.get("description") || ""),
+        host: hostUrl ? { name: hostName, url: hostUrl } : { name: hostName },
+        starts_at: String(form.get("starts_at") || ""),
+        ends_at: String(form.get("ends_at") || ""),
+        image: String(form.get("image") || ""),
+        metadata,
+      });
+    },
     onSuccess: () => setSeriesStatus("Series created."),
     onError: (err) => setSeriesStatus(errorMessage(err)),
   });
@@ -610,10 +800,15 @@ function AdminPage() {
           <p className="eyebrow">Admin</p>
           <h2>Create Series</h2>
           <label>Title<input name="title" required /></label>
-          <label>Description<textarea name="description" required /></label>
+          <label>Description<textarea name="description" required placeholder="Markdown is supported on the overview page." /></label>
+          <div className="split-fields">
+            <label>Host name<input name="host_name" defaultValue="Colosseum" required /></label>
+            <label>Host URL <input name="host_url" placeholder="https://example.com" /></label>
+          </div>
           <label>Starts at<input name="starts_at" type="datetime-local" required /></label>
           <label>Ends at<input name="ends_at" type="datetime-local" /></label>
           <label>Image URL<input name="image" /></label>
+          <label>Metadata JSON<textarea name="metadata" defaultValue={'{\n  "Event Type": "Public",\n  "Location": "Online"\n}'} /></label>
           <button className="solid-button"><Plus size={17} /> Create Series</button>
           {seriesStatus ? <p className="muted">{seriesStatus}</p> : null}
         </form>
@@ -655,7 +850,8 @@ export default function App() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/auth" element={<AuthPage />} />
-      <Route path="/series/:sid" element={<SeriesArenaPage />} />
+      <Route path="/series/:sid" element={<SeriesOverviewPage />} />
+      <Route path="/series/:sid/arena" element={<SeriesArenaPage />} />
       <Route path="/profile" element={<ProfilePage />} />
       <Route path="/admin" element={<AdminPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
