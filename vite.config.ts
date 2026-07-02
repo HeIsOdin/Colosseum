@@ -6,10 +6,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/auth": "http://localhost:5000",
-      "/series": "http://localhost:5000",
-      "/players": "http://localhost:5000",
-      "/diagnostics": "http://localhost:5000",
+      "/api": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
     },
-  },
+  }
 });
