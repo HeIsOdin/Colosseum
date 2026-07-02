@@ -273,6 +273,9 @@ button { cursor: pointer; }
 }
 .event-card p {
   max-width: 600px;
+  max-height: 3.8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
   margin: 0;
   color: #f5ead7;
   line-height: 1.34;
@@ -288,7 +291,7 @@ button { cursor: pointer; }
   font-weight: 700;
   font-size: 0.88rem;
 }
-.event-meta span { display: inline-flex; align-items: center; gap: 7px; }
+.event-meta span { display: inline-flex; align-items: center; gap: 7px; font-size: smaller; color: var(--muted); }
 .event-action { display: flex; align-self: end; padding-right: 2px; }
 .event-button { min-width: 160px; }
 

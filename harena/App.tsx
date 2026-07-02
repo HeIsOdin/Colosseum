@@ -43,6 +43,8 @@ function formatDate(value?: string | null) {
     month: "short",
     day: "numeric",
     year: "numeric",
+    hour: "numeric",
+    minute: "numeric",
   }).format(new Date(value));
 }
 
@@ -65,7 +67,7 @@ function getActionLabel(series: SeriesSummary, joined: boolean, loggedIn: boolea
   if (state === "past") return "View Archive";
   if (state === "upcoming") return "View Briefing";
   if (!loggedIn) return "View Series";
-  return joined ? "Enter Arena" : "Join Series";
+  return joined ? "Continue Series" : "Join Series";
 }
 
 function errorMessage(error: unknown) {
@@ -220,8 +222,6 @@ function LandingPage() {
 }
 
 function SeriesEventCard({ series, joined, loggedIn }: { series: SeriesSummary; joined: boolean; loggedIn: boolean }) {
-  const campaign = getCampaignModule(series as SeriesData);
-  const state = getSeriesState(series);
   const hasImage = Boolean(series.image);
   const cardStyle: CSSProperties = hasImage
     ? {
@@ -232,15 +232,10 @@ function SeriesEventCard({ series, joined, loggedIn }: { series: SeriesSummary; 
   return (
     <article className={clsx("event-card", !hasImage && "no-image")} style={cardStyle}>
       <div className="event-copy">
-        <div className="event-kicker-row">
-          <span className={clsx("status-pill", state, joined && "joined")}>{joined ? "Joined" : state}</span>
-          <span className="campaign-pill">{campaign.eyebrow}</span>
-        </div>
         <h2>{series.title}</h2>
         <p>{series.description}</p>
         <div className="event-meta">
           <span><CalendarDays size={15} /> {formatRange(series)}</span>
-          <span>{joined ? "You are enlisted" : "Open for challengers"}</span>
         </div>
       </div>
       <div className="event-action">
