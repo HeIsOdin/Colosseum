@@ -4,6 +4,8 @@ from hypogeum.armamentarium import redis_connect
 
 load_dotenv() # remove for prod
 
+API_ROOT = '/api'
+
 login_manager = LoginManager()
 REDIS_CLIENT = redis_connect()
 

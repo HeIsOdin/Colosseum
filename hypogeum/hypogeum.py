@@ -1,4 +1,4 @@
-from . import login_manager, REDIS_CLIENT
+from . import login_manager, REDIS_CLIENT, API_ROOT
 from flask import Flask
 from flask_session import Session
 from psycopg2 import extras
@@ -24,11 +24,15 @@ def configure_app(app: Flask) -> None:
     extras.register_uuid()  # Register UUID adapter for psycopg2
 
 def register_routes(app: Flask) -> None:
-    app.register_blueprint(vomitoria_bp)
-    app.register_blueprint(auctoramentum_bp)
-    app.register_blueprint(gladiator_bp)
-    app.register_blueprint(pugna_bp)
-    app.register_blueprint(sanitarium_bp)
+    url_prefix = f"{API_ROOT}/{vomitoria_bp.url_prefix}" if vomitoria_bp.url_prefix else API_ROOT
+    app.register_blueprint(vomitoria_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{auctoramentum_bp.url_prefix}" if auctoramentum_bp.url_prefix else API_ROOT
+    app.register_blueprint(auctoramentum_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{gladiator_bp.url_prefix}" if gladiator_bp.url_prefix else API_ROOT
+    app.register_blueprint(gladiator_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{pugna_bp.url_prefix}" if pugna_bp.url_prefix else API_ROOT
+    app.register_blueprint(pugna_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{sanitarium_bp.url_prefix}" if sanitarium_bp.url_prefix else API_ROOT
 
 
 def create_app() -> Flask:
