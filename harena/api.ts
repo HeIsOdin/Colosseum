@@ -14,6 +14,16 @@ export class ApiError extends Error {
   }
 }
 
+function parseJsonObject(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export const UserDetailsSchema = z.object({
   pid: z.string(),
   sids: z.array(z.number()).default([]),
@@ -21,6 +31,23 @@ export const UserDetailsSchema = z.object({
 });
 
 export type UserDetails = z.infer<typeof UserDetailsSchema>;
+
+export const MetadataSchema = z.preprocess(
+  parseJsonObject,
+  z.record(z.string(), z.unknown()).default({}),
+);
+
+export type SeriesMetadata = z.infer<typeof MetadataSchema>;
+
+export const SeriesHostSchema = z.preprocess(
+  parseJsonObject,
+  z.object({
+    name: z.string().default("Colosseum"),
+    url: z.string().nullable().optional(),
+  }).passthrough(),
+);
+
+export type SeriesHost = z.infer<typeof SeriesHostSchema>;
 
 export const SeriesSummarySchema = z.object({
   sid: z.number(),
@@ -32,6 +59,18 @@ export const SeriesSummarySchema = z.object({
 });
 
 export type SeriesSummary = z.infer<typeof SeriesSummarySchema>;
+
+export const SeriesOverviewPayloadSchema = z.object({
+  title: z.string(),
+  description: z.string(),
+  host: SeriesHostSchema,
+  starts_at: z.string(),
+  ends_at: z.string().nullable().optional(),
+  image: z.string().nullable().optional(),
+  metadata: MetadataSchema,
+});
+
+export type SeriesOverview = z.infer<typeof SeriesOverviewPayloadSchema> & { sid: number };
 
 export const SolverSchema = z.object({
   display_name: z.string().nullable().optional(),
@@ -142,6 +181,12 @@ export const api = {
     return z.array(SeriesSummarySchema).parse(payload.series ?? []);
   },
 
+  async getSeriesOverview(sid: number): Promise<SeriesOverview> {
+    const payload = await request<{ overview: unknown }>(`/series/${sid}/overview/`);
+    const overview = SeriesOverviewPayloadSchema.parse(payload.overview);
+    return { ...overview, sid };
+  },
+
   async getSeries(sid: number): Promise<SeriesData> {
     const payload = await request<{ series: unknown }>(`/series/${sid}`);
     return SeriesDataSchema.parse(payload.series);
@@ -177,9 +222,14 @@ export const api = {
   async createSeries(input: {
     title: string;
     description: string;
+    host: {
+      name: string;
+      url?: string;
+    };
     starts_at: string;
     ends_at?: string;
-    image?: string;
+    image: string;
+    metadata: Record<string, unknown>;
   }) {
     return request("/series/", {
       method: "PUT",
