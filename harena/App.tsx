@@ -32,7 +32,6 @@ import {
   type Challenge,
   type SeriesData,
   type SeriesMetadata,
-  type SeriesOverview,
   type SeriesSummary,
 } from "./api";
 import { useAuth } from "./auth";
@@ -86,31 +85,6 @@ function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return "Something went wrong.";
-}
-
-function formatDuration(ms: number) {
-  if (ms <= 0) return "Now";
-  const totalSeconds = Math.floor(ms / 1000);
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const parts = [
-    days > 0 ? `${days}d` : null,
-    hours > 0 ? `${hours}h` : null,
-    minutes > 0 ? `${minutes}m` : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join(" ") : "Less than 1m";
-}
-
-function getCountdownText(series: Pick<SeriesOverview, "starts_at" | "ends_at">) {
-  const now = Date.now();
-  const starts = new Date(series.starts_at).getTime();
-  const ends = series.ends_at ? new Date(series.ends_at).getTime() : null;
-
-  if (starts > now) return `Starts in ${formatDuration(starts - now)}`;
-  if (ends !== null && ends > now) return `Ends in ${formatDuration(ends - now)}`;
-  if (ends !== null && ends <= now) return "Series concluded";
-  return "Live now";
 }
 
 function formatMetadataValue(value: unknown): string | null {
@@ -339,6 +313,7 @@ function SeriesOverviewPage() {
   const member = auth.isMemberOf(sid);
   const specifications = overview ? getSpecificationEntries(overview.metadata) : [];
   const hostUrl = overview?.host.url?.trim();
+  const hostLogoUrl = overview?.host.logo_url?.trim();
   const state = overview ? getSeriesState(overview) : "ongoing";
 
   return (
@@ -366,12 +341,11 @@ function SeriesOverviewPage() {
               </div>
             </div>
             <div className="overview-actions">
-              <div className="countdown-card">{getCountdownText(overview)}</div>
               {state === "past" ? (
                 <button className="ghost-button" disabled>Reminisce</button>
               ) : auth.user ? (
                 member ? (
-                  <Link className="solid-button" to={`/series/${sid}/arena`}>Continue Series <ArrowRight size={17} /></Link>
+                  <Link className="solid-button" to={`/series/${sid}/arena`}>Continue <ArrowRight size={17} /></Link>
                 ) : (
                   <button className="solid-button" onClick={() => joinMutation.mutate()} disabled={joinMutation.isPending}>
                     {joinMutation.isPending ? <Loader2 className="spin" size={17} /> : null}
@@ -396,7 +370,9 @@ function SeriesOverviewPage() {
               <section className="sidebar-card">
                 <h3>Hosted by</h3>
                 <div className="host-row">
-                  <div className="host-icon"><Shield size={18} /></div>
+                  <div className="host-icon">
+                    {hostLogoUrl ? <img src={hostLogoUrl} alt="" /> : <Shield size={18} />}
+                  </div>
                   <div>
                     <strong>{overview.host.name}</strong>
                     {hostUrl ? (
@@ -408,9 +384,9 @@ function SeriesOverviewPage() {
                 </div>
               </section>
 
-              <section className="sidebar-card">
-                <h3>Specifications</h3>
-                {specifications.length > 0 ? (
+              {specifications.length > 0 ? (
+                <section className="sidebar-card">
+                  <h3>Specifications</h3>
                   <dl className="spec-list">
                     {specifications.map(([key, value]) => (
                       <div key={key}>
@@ -419,10 +395,8 @@ function SeriesOverviewPage() {
                       </div>
                     ))}
                   </dl>
-                ) : (
-                  <p className="muted">No specifications have been added yet.</p>
-                )}
-              </section>
+                </section>
+              ) : null}
             </aside>
           </div>
         </section>
@@ -758,11 +732,18 @@ function AdminPage() {
     mutationFn: (form: FormData) => {
       const hostName = String(form.get("host_name") || "").trim();
       const hostUrl = String(form.get("host_url") || "").trim();
+      const hostLogoUrl = String(form.get("host_logo_url") || "").trim();
       const metadata = parseMetadataJson(String(form.get("metadata") || "{}"));
+      const host = {
+        name: hostName,
+        ...(hostUrl ? { url: hostUrl } : {}),
+        ...(hostLogoUrl ? { logo_url: hostLogoUrl } : {}),
+      };
+
       return api.createSeries({
         title: String(form.get("title") || ""),
         description: String(form.get("description") || ""),
-        host: hostUrl ? { name: hostName, url: hostUrl } : { name: hostName },
+        host,
         starts_at: String(form.get("starts_at") || ""),
         ends_at: String(form.get("ends_at") || ""),
         image: String(form.get("image") || ""),
@@ -805,6 +786,7 @@ function AdminPage() {
             <label>Host name<input name="host_name" defaultValue="Colosseum" required /></label>
             <label>Host URL <input name="host_url" placeholder="https://example.com" /></label>
           </div>
+          <label>Host logo URL<input name="host_logo_url" placeholder="https://example.com/logo.png" /></label>
           <label>Starts at<input name="starts_at" type="datetime-local" required /></label>
           <label>Ends at<input name="ends_at" type="datetime-local" /></label>
           <label>Image URL<input name="image" /></label>
