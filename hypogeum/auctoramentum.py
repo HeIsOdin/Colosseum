@@ -7,6 +7,7 @@ from hypogeum.armamentarium import (
     as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
 )
 
+import json
 import uuid
 import logging
 import psycopg2.sql as sql
@@ -153,7 +154,7 @@ def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
-            for col in ['title', 'description', 'starts_at', 'ends_at', 'image']
+            for col in ['title', 'description', 'host', 'starts_at', 'ends_at', 'image', 'metadata']
         )
         query = sql.SQL("SELECT {columns} FROM {table} WHERE sid = %s").format(
             table=table,
@@ -182,17 +183,19 @@ def get_series_overview(sid: int):
     overview, success, message, status_code = _get_series_overview(sid)
     return jsonify({"success": success, "message": message, "overview": overview}), status_code
 
-def _create_series(title: str, description: str, starts_at_str: str,
-                   ends_at_str: str, image: str) -> tuple[str, bool, str, int]:
+def _create_series(title: str, description: str, host: dict[str, str], image: str, metadata: dict,
+                   starts_at_str: str, ends_at_str: str) -> tuple[str, bool, str, int]:
     """
     Create a new series in the database.
 
     Args:
         - title (str) : The title of the series.
         - description (str) : The description of the series.
+        - host (dict) : A dictionary containing the host's name and URL.
         - starts_at_str (str) : The start date of the series.
         - ends_at_str (str) : The end date of the series.
         - image (str) : The image URL for the series.
+        - metadata (dict) : Additional metadata for the series.
     
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
@@ -207,12 +210,16 @@ def _create_series(title: str, description: str, starts_at_str: str,
         if not title.strip(): return "", False, "Title must not be empty.", 400
         if not description.strip(): return "", False, "Description must not be empty.", 400
         if len(title) > 50: return "", False, "Title must not exceed 50 characters.", 400
+        if 'name' not in host or len(host['name'].strip()) == 0 or len(host['name']) > 20:
+            return "", False, "Host name is invalid", 400
+        if 'url' in host and len(host['url'].strip()) == 0 or len(host['url']) > 100:
+            return "", False, "Host URL is invalid", 400
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
-            for col in ['title', 'description', 'starts_at', 'ends_at', 'image']
+            for col in ['title', 'description', 'host', 'starts_at', 'ends_at', 'image', 'metadata']
         )
-        values = sql.SQL("(%s, %s, %s, %s, %s)")
+        values = sql.SQL("(%s, %s, %s, %s, %s, %s, %s)")
         query = sql.SQL("INSERT INTO {table} ({columns}) VALUES {values} RETURNING sid").format(
                             table=table,
                             columns=columns,
@@ -220,7 +227,7 @@ def _create_series(title: str, description: str, starts_at_str: str,
                         )
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(query, (title, description, starts_at, ends_at, image))
+                cursor.execute(query, (title, description, json.dumps(host), starts_at, ends_at, image, json.dumps(metadata)))
                 res = cursor.fetchone()
                 if not res:
                     logger.error("Failed to retrieve the newly created series ID.")
@@ -244,9 +251,9 @@ def _create_series(title: str, description: str, starts_at_str: str,
 @login_required
 @admin_required
 def create_series():
-    data = request.get_json()
+    data = dict(request.get_json())
     if data is None:
-        data = request.form.to_dict()
+        data: dict = request.form.to_dict()
     data["starts_at_str"] = data.pop("starts_at", '')
     data["ends_at_str"] = data.pop("ends_at", '')
     sid, success, message, status_code = _create_series(**data)
@@ -382,9 +389,11 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID,) 
     series_data = {
         "title": "Diagnostics",
         "description": "This series is created for integration testing purposes.",
+        "host": {"name": "Integration Test Suite", "url": "https://integration.example.com"},
         "starts_at_str": datetime.now().isoformat(),
         "ends_at_str": (datetime.now() + timedelta(days=1)).isoformat(),
-        "image": "https://example.com/test_image.png"
+        "image": "https://example.com/test_image.png",
+        "metadata": {}
     }
         
     checklist.append("Series Creation was successful.")

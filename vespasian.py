@@ -78,9 +78,11 @@ def _create_series_table(cursor: psycopg2.extensions.cursor) -> None:
                 sid SERIAL PRIMARY KEY,
                 title VARCHAR(255) NOT NULL,
                 description TEXT NOT NULL,
+                host JSONB NOT NULL,
                 starts_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 ends_at TIMESTAMP WITH TIME ZONE,
-                image VARCHAR(255)
+                image VARCHAR(255),
+                metadata JSONB
             );
         """).format(sql.Identifier(table_name))
     )
