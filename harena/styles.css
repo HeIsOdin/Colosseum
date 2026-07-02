@@ -368,16 +368,6 @@ button { cursor: pointer; }
   justify-content: flex-end;
   gap: 10px;
 }
-.countdown-card {
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  border-radius: 8px;
-  padding: 0 17px;
-  color: var(--ivory);
-  background: rgba(255,255,255,0.075);
-  font-weight: 820;
-}
 .overview-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
@@ -391,7 +381,7 @@ button { cursor: pointer; }
 }
 .markdown-content {
   max-width: 840px;
-  color: #9eb0cb;
+  color: #9badc7;
   font-size: 1.06rem;
   line-height: 1.68;
 }
@@ -418,22 +408,35 @@ button { cursor: pointer; }
   border-radius: 5px;
   padding: 0.12rem 0.35rem;
   color: #f4d59a;
-  background: rgba(0,0,0,0.28);
+  background: rgba(0,0,0,0.24);
   font-family: "JetBrains Mono", monospace;
   font-size: 0.9em;
 }
 .markdown-content pre {
-  overflow: auto;
-  border: 1px solid rgba(220, 166, 78, 0.22);
+  max-width: 100%;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  border: 1px solid rgba(220, 166, 78, 0.18);
   border-radius: 12px;
   padding: 1rem;
-  background: rgba(0,0,0,0.3);
+  background: rgba(0,0,0,0.18);
+}
+.markdown-content pre code {
+  display: block;
+  padding: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: transparent;
 }
 .markdown-content table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   margin: 1.2rem 0;
-  overflow: hidden;
+  word-break: break-word;
 }
 .markdown-content th, .markdown-content td {
   border: 1px solid rgba(220, 166, 78, 0.18);
@@ -456,9 +459,16 @@ button { cursor: pointer; }
   height: 34px;
   display: grid;
   place-items: center;
+  overflow: hidden;
   border-radius: 8px;
   color: #101827;
   background: linear-gradient(180deg, #f5d28d, var(--gold));
+}
+.host-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 .host-row strong { display: block; color: var(--ivory); margin-bottom: 6px; }
 .host-row a { display: inline-flex; align-items: center; gap: 6px; color: var(--gold-bright); font-size: 0.9rem; }
