@@ -77,9 +77,9 @@ function getSeriesState(series: Pick<SeriesSummary, "starts_at" | "ends_at">): S
 function getActionLabel(series: SeriesSummary, joined: boolean, loggedIn: boolean) {
   const state = getSeriesState(series);
   if (state === "past") return "Reminisce";
-  if (state === "upcoming") return "View Briefing";
-  if (!loggedIn) return "View Series";
-  return joined ? "Continue Series" : "Join Series";
+  if (state === "upcoming") return "Prepare";
+  if (!loggedIn) return "Learn More";
+  return joined ? "Continue" : "Join Series";
 }
 
 function errorMessage(error: unknown) {
