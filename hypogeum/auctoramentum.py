@@ -214,6 +214,8 @@ def _create_series(title: str, description: str, host: dict[str, str], image: st
             return "", False, "Host name is invalid", 400
         if 'url' in host and len(host['url'].strip()) == 0 or len(host['url']) > 100:
             return "", False, "Host URL is invalid", 400
+        if 'logo' in host and len(host['logo'].strip()) == 0 or len(host['logo']) > 100:
+            return "", False, "Host logo URL is invalid", 400
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
