@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Hypogeum mark</title>
+  <desc id="desc">A bronze underground arena arch mark.</desc>
+  <defs>
+    <linearGradient id="bronze" x1="16" y1="12" x2="110" y2="118" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f2d094"/>
+      <stop offset="0.45" stop-color="#be7e3f"/>
+      <stop offset="1" stop-color="#6e3822"/>
+    </linearGradient>
+    <radialGradient id="ember" cx="50%" cy="45%" r="55%">
+      <stop stop-color="#f2c36d" stop-opacity="0.8"/>
+      <stop offset="0.65" stop-color="#8e2f25" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="#0d0a08"/>
+  <circle cx="64" cy="64" r="58" fill="url(#ember)"/>
+  <path d="M24 104V62c0-22.1 17.9-40 40-40s40 17.9 40 40v42H88V63c0-13.3-10.7-24-24-24S40 49.7 40 63v41H24Z" fill="url(#bronze)"/>
+  <path d="M50 104V65c0-7.7 6.3-14 14-14s14 6.3 14 14v39H50Z" fill="#080706"/>
+  <path d="M22 108h84M32 84h64M38 66h52" stroke="#f2d094" stroke-opacity="0.45" stroke-width="4" stroke-linecap="round"/>
+  <path d="M64 18v20M42 27l11 17M86 27 75 44" stroke="#f2d094" stroke-opacity="0.55" stroke-width="4" stroke-linecap="round"/>
+</svg>

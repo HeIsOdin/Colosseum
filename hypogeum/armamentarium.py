@@ -10,9 +10,9 @@ def as_uuid(value) -> uuid.UUID:
     Convert a string or UUID to a UUID object.
 
     Args:
-        - value (str | uuid.UUID): The value to convert.
+        - value (str | uuid.UUID) : The value to convert.
     Returns:
-        - uuid.UUID: The converted UUID object.
+        uuid.UUID: The converted UUID object.
     """
     if isinstance(value, uuid.UUID):
         return value
@@ -28,16 +28,16 @@ def db_connect() -> psycopg2.extensions.connection:
     }
     return psycopg2.connect(**db)
 
-def redis_connect() -> redis.Redis:
+def redis_connect(decode: bool = True) -> redis.Redis:
     """
     Normalize the Redis URL for Flask-Session configuration.
     
     Returns:
-        str: A normalized Redis URL in the format `redis://user:password@host:port/`
+        redis.Redis: A Redis client instance.
     """
     host = env('REDIS_HOST', 'localhost:6379')[0]
     user, passwd = env('REDIS_USER,REDIS_PASSWD')
-    return redis.from_url(f"redis://{user}:{passwd}@{host}/0", decode_responses=True)
+    return redis.from_url(f"redis://{user}:{passwd}@{host}/0", decode_responses=decode)
 
 def env(keys: str, defaults: str = '', delimiter: str = ",") -> tuple[str, ...]:
     """

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" role="img" aria-labelledby="title desc">
+  <title id="title">Signal lines</title>
+  <desc id="desc">Decorative radio and network signal traces.</desc>
+  <rect width="900" height="620" fill="none"/>
+  <g fill="none" stroke="#e8b86b" stroke-linecap="round" opacity="0.58">
+    <path d="M70 138h92l26-48 50 120 41-72h90" stroke-width="5"/>
+    <path d="M530 132h72l20-36 45 94 28-58h106" stroke-width="4"/>
+    <path d="M98 430h114l36-72 54 135 45-80h160" stroke-width="5"/>
+    <path d="M560 450h66l22-40 38 84 34-64h96" stroke-width="4"/>
+  </g>
+  <g fill="none" stroke="#8e2f25" stroke-linecap="round" opacity="0.5">
+    <circle cx="450" cy="310" r="68" stroke-width="5"/>
+    <circle cx="450" cy="310" r="130" stroke-width="4"/>
+    <circle cx="450" cy="310" r="198" stroke-width="3"/>
+    <path d="M450 122v376M262 310h376" stroke-width="3" stroke-dasharray="9 15"/>
+  </g>
+  <g fill="#e8b86b" opacity="0.72">
+    <circle cx="70" cy="138" r="7"/>
+    <circle cx="369" cy="138" r="7"/>
+    <circle cx="530" cy="132" r="6"/>
+    <circle cx="801" cy="132" r="6"/>
+    <circle cx="98" cy="430" r="7"/>
+    <circle cx="507" cy="413" r="7"/>
+    <circle cx="560" cy="450" r="6"/>
+    <circle cx="816" cy="430" r="6"/>
+  </g>
+</svg>
