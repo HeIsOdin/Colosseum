@@ -44,6 +44,7 @@ export const SeriesHostSchema = z.preprocess(
   z.object({
     name: z.string().default("Colosseum"),
     url: z.string().nullable().optional(),
+    logo_url: z.string().nullable().optional(),
   }).passthrough(),
 );
 
@@ -225,6 +226,7 @@ export const api = {
     host: {
       name: string;
       url?: string;
+      logo_url?: string;
     };
     starts_at: string;
     ends_at?: string;
