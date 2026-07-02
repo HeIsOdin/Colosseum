@@ -30,7 +30,6 @@ import {
   api,
   ApiError,
   type Challenge,
-  type SeriesData,
   type SeriesMetadata,
   type SeriesSummary,
 } from "./api";
