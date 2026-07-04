@@ -10,9 +10,10 @@ import {
   CheckCircle2,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
   Flag,
   Globe2,
-  KeyRound,
   Loader2,
   Lock,
   LogOut,
@@ -410,9 +411,21 @@ function AuthPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  function switchMode(nextMode: "login" | "register") {
+    setMode(nextMode);
+    setError(null);
+    setMessage(null);
+    setConfirmPassword("");
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -424,9 +437,15 @@ function AuthPage() {
         await auth.login(email, password);
         navigate("/");
       } else {
+        if (password !== confirmPassword) {
+          setError("Passwords do not match.");
+          return;
+        }
         const responseMessage = await auth.register(email, password);
-        setMessage(responseMessage || "Registration request received.");
+        setMessage(responseMessage || "Registration request received. You may sign in now.");
         setMode("login");
+        setPassword("");
+        setConfirmPassword("");
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -438,31 +457,99 @@ function AuthPage() {
   if (auth.status === "authenticated") return <Navigate to="/" replace />;
 
   return (
-    <Shell>
-      <section className="auth-layout">
-        <div className="dossier-card">
-          <p className="eyebrow">Access Vestibule</p>
-          <h1>{mode === "login" ? "Return to the arena." : "Request entry."}</h1>
+    <main className="auth-page">
+      <Link to="/" className="auth-brand" aria-label="Colosseum home">
+        Colosseum
+      </Link>
+
+      <section className="auth-card" aria-label={mode === "login" ? "Sign in" : "Create account"}>
+        <div className="auth-copy">
+          <h1>{mode === "login" ? "Sign in to Colosseum" : "Create your Colosseum account"}</h1>
           <p>
-            Sessions are server-backed. The browser keeps only the visible identity details returned by Colosseum.
+            {mode === "login"
+              ? "Return to your active series and continue the run."
+              : "Create an account to join series, submit flags, and track your progress."}
           </p>
         </div>
-        <form className="form-card" onSubmit={onSubmit}>
-          <div className="segmented">
-            <button type="button" className={clsx(mode === "login" && "active")} onClick={() => setMode("login")}>Login</button>
-            <button type="button" className={clsx(mode === "register" && "active")} onClick={() => setMode("register")}>Register</button>
-          </div>
-          <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required /></label>
-          <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required /></label>
-          {error ? <p className="form-error">{error}</p> : null}
-          {message ? <p className="form-success">{message}</p> : null}
-          <button className="solid-button" disabled={busy}>
-            {busy ? <Loader2 className="spin" size={17} /> : <KeyRound size={17} />}
-            {mode === "login" ? "Enter" : "Register"}
+
+        <form className="auth-form" onSubmit={onSubmit}>
+          <label className="auth-field">
+            <span>Email</span>
+            <input
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              type="email"
+              autoComplete="email"
+              required
+            />
+          </label>
+
+          <label className="auth-field">
+            <span>Password</span>
+            <div className="auth-password-control">
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type={showPassword ? "text" : "password"}
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                required
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((value) => !value)}
+              >
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
+          </label>
+
+          {mode === "register" ? (
+            <label className="auth-field">
+              <span>Confirm password</span>
+              <div className="auth-password-control">
+                <input
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  type={showConfirmPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  required
+                />
+                <button
+                  type="button"
+                  aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  onClick={() => setShowConfirmPassword((value) => !value)}
+                >
+                  {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
+            </label>
+          ) : null}
+
+          {error ? <p className="auth-error">{error}</p> : null}
+          {message ? <p className="auth-success">{message}</p> : null}
+
+          <button className="auth-submit" disabled={busy}>
+            {busy ? <Loader2 className="spin" size={18} /> : null}
+            {mode === "login" ? "Sign in" : "Create Account"}
           </button>
         </form>
+
+        <div className="auth-switch">
+          {mode === "login" ? (
+            <p>
+              New to Colosseum?{" "}
+              <button type="button" onClick={() => switchMode("register")}>Create Account <ArrowRight size={16} /></button>
+            </p>
+          ) : (
+            <p>
+              Already have an account?{" "}
+              <button type="button" onClick={() => switchMode("login")}>Sign in <ArrowRight size={16} /></button>
+            </p>
+          )}
+        </div>
       </section>
-    </Shell>
+    </main>
   );
 }
 
