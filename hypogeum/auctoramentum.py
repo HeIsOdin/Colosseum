@@ -53,7 +53,24 @@ def get_series_list():
     series_list, success, message, status_code = _get_series_list(offset, limit)
     return jsonify({"success": success, "message": message, "series": series_list}), status_code
 
-def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, bool, str, int]:
+def _series_has_started(starts_at: datetime | None) -> bool:
+    if starts_at is None:
+        return False
+    if starts_at.tzinfo is not None and starts_at.utcoffset() is not None:
+        now = datetime.now(starts_at.tzinfo)
+    else:
+        now = datetime.now()
+    return starts_at <= now
+
+def _default_arena_stats() -> dict:
+    return {
+        "rank": None,
+        "active_players": 0,
+        "points": 0,
+        "solves": 0,
+    }
+
+def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID | None = None) -> tuple[dict, bool, str, int]:
     """
     Retrieve the data for a specific series by its ID, including all challenges
     and their solvers.
@@ -84,6 +101,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
                 (
                 SELECT json_agg(
                     json_build_object(
+                        'pid', u.pid,
                         'display_name', u.display_name,
                         'avatar', u.avatar,
                         'solved_at', limited_solves.solved_at
@@ -103,6 +121,39 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
             u_table=user_table
         )
 
+        arena_stats_query = sql.SQL("""
+            WITH per_player AS (
+                SELECT
+                    s.pid,
+                    COALESCE(SUM(c.points), 0)::INTEGER AS points,
+                    COUNT(*)::INTEGER AS solves,
+                    MIN(s.solved_at) AS first_solve_at
+                FROM {s_table} s
+                JOIN {c_table} c ON c.sid = s.sid AND c.cid = s.cid
+                WHERE s.sid = %s
+                GROUP BY s.pid
+            ), ranked AS (
+                SELECT
+                    pid,
+                    points,
+                    solves,
+                    RANK() OVER (
+                        ORDER BY points DESC, solves DESC, first_solve_at ASC, pid ASC
+                    )::INTEGER AS rank
+                FROM per_player
+            )
+            SELECT
+                (SELECT COUNT(*)::INTEGER FROM per_player) AS active_players,
+                r.rank,
+                COALESCE(r.points, 0)::INTEGER AS points,
+                COALESCE(r.solves, 0)::INTEGER AS solves
+            FROM (SELECT 1) singleton
+            LEFT JOIN ranked r ON r.pid = %s
+        """).format(
+            s_table=solves_table,
+            c_table=challenges_table,
+        )
+
         with db_connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(series_query, (sid,))
@@ -112,8 +163,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
 
                 series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 series_data = dict(zip(series_columns, series_row))
-                current_date = datetime.now()
-                if series_data.get('starts_at') is None or series_data['starts_at'] > current_date:
+                if not _series_has_started(series_data.get('starts_at')):
                     return {}, False, "Series has not started yet.", 403
 
                 cursor.execute(challenges_query, (sid, limit, offset, sid))
@@ -123,6 +173,22 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
                 series_data['challenges'] = [
                     dict(zip(challenges_columns, row)) for row in challenges_rows
                 ]
+
+                if pid is not None:
+                    cursor.execute(arena_stats_query, (sid, pid))
+                    stats_row = cursor.fetchone()
+                    if stats_row:
+                        active_players, rank, points, solves = stats_row
+                        series_data['arena_stats'] = {
+                            "rank": rank,
+                            "active_players": active_players or 0,
+                            "points": points or 0,
+                            "solves": solves or 0,
+                        }
+                    else:
+                        series_data['arena_stats'] = _default_arena_stats()
+                else:
+                    series_data['arena_stats'] = _default_arena_stats()
 
         return series_data, True, "Series data retrieved successfully.", 200
 
@@ -139,7 +205,8 @@ def get_series_data(sid: int):
     offset = request.args.get('offset', default=0, type=int)
     limit = request.args.get('limit', default=10, type=int)
     limit = min(max(limit, 1), 20)
-    series_data, success, message, status_code = _get_series_data(sid, offset, limit)
+    pid = as_uuid(current_user.id)
+    series_data, success, message, status_code = _get_series_data(sid, offset, limit, pid)
     return jsonify({"success": success, "message": message, "series": series_data}), status_code
 
 def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
@@ -213,11 +280,13 @@ def _create_series(title: str, description: str, host: dict[str, str], image: st
         if not title.strip(): return "", False, "Title must not be empty.", 400
         if not description.strip(): return "", False, "Description must not be empty.", 400
         if len(title) > 50: return "", False, "Title must not exceed 50 characters.", 400
+        if 'logo' in host and 'logo_url' not in host:
+            host['logo_url'] = host.pop('logo')
         if 'name' not in host or len(host['name'].strip()) == 0 or len(host['name']) > 20:
             return "", False, "Host name is invalid", 400
-        if 'url' in host and len(host['url'].strip()) == 0 or len(host['url']) > 100:
+        if 'url' in host and (len(host['url'].strip()) == 0 or len(host['url']) > 100):
             return "", False, "Host URL is invalid", 400
-        if 'logo' in host and len(host['logo'].strip()) == 0 or len(host['logo']) > 100:
+        if 'logo_url' in host and (len(host['logo_url'].strip()) == 0 or len(host['logo_url']) > 100):
             return "", False, "Host logo URL is invalid", 400
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
@@ -467,7 +536,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID,) 
     checklist.append("Series Data Retrieval was successful.")
     try:
         if sid is None: raise ValueError("Series ID is None, cannot retrieve series data.")
-        series_data, success, message, _ = _get_series_data(sid)
+        series_data, success, message, _ = _get_series_data(sid, pid=pid)
         if success and isinstance(series_data, dict):
             checks.append(True)
         else:
