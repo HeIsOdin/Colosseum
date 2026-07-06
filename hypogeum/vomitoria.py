@@ -1,7 +1,7 @@
 from . import login_manager, REDIS_CLIENT
 from flask import Blueprint, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user, UserMixin
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import wraps
 from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import env, db_connect, as_uuid
@@ -149,9 +149,19 @@ def locked_challenge_check(f):
         try:
             pid = as_uuid(current_user.id)
 
+            series_table = env("POSTGRESQL_SERIES_TABLE")[0]
             memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
             challenges_table = env("POSTGRESQL_CHALLENGES_TABLE")[0]
             solves_table = env("POSTGRESQL_SOLVES_TABLE")[0]
+
+            series_query = sql.SQL("""
+                SELECT starts_at, ends_at,
+                FROM {series}
+                WHERE sid = %s
+                LIMIT 1
+            """).format(
+                series=sql.Identifier(series_table),
+            )
 
             membership_query = sql.SQL("""
                 SELECT 1
@@ -182,6 +192,27 @@ def locked_challenge_check(f):
 
             with db_connect() as conn:
                 with conn.cursor() as cursor:
+                    cursor.execute(series_query, (sid,))
+                    series_row = cursor.fetchone()
+                    if series_row is None:
+                        return jsonify({
+                            "success": False,
+                            "message": "Series not found."
+                        }), 404
+                    
+                    series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    series_data = dict(zip(series_columns, series_row))
+                    current_date = datetime.now()
+                    if series_data.get('starts_at') is None or series_data['starts_at'] > current_date:
+                        return jsonify({
+                            "success": False,
+                            "message": "Series has not started yet."
+                        }), 403
+                    if series_data.get('ends_at') is not None and series_data['ends_at'] < current_date:
+                        return jsonify({
+                            "success": False,
+                            "message": "Series has already ended."
+                        }), 403
                     cursor.execute(membership_query, (sid, pid))
                     if cursor.fetchone() is None:
                         return jsonify({
