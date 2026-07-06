@@ -28,9 +28,18 @@ export const UserDetailsSchema = z.object({
   pid: z.string(),
   sids: z.array(z.number()).default([]),
   is_admin: z.boolean().default(false),
+  display_name: z.string().nullable().optional(),
+  avatar: z.string().nullable().optional(),
 });
 
 export type UserDetails = z.infer<typeof UserDetailsSchema>;
+
+export const LoginResultSchema = z.object({
+  user: UserDetailsSchema,
+  caller: z.string().nullable().optional(),
+});
+
+export type LoginResult = z.infer<typeof LoginResultSchema>;
 
 export const MetadataSchema = z.preprocess(
   parseJsonObject,
@@ -74,10 +83,20 @@ export const SeriesOverviewPayloadSchema = z.object({
 export type SeriesOverview = z.infer<typeof SeriesOverviewPayloadSchema> & { sid: number };
 
 export const SolverSchema = z.object({
+  pid: z.string().nullable().optional(),
   display_name: z.string().nullable().optional(),
   avatar: z.string().nullable().optional(),
   solved_at: z.string(),
 });
+
+export const ArenaStatsSchema = z.object({
+  rank: z.number().nullable().optional(),
+  active_players: z.number().default(0),
+  points: z.number().default(0),
+  solves: z.number().default(0),
+});
+
+export type ArenaStats = z.infer<typeof ArenaStatsSchema>;
 
 export const ChallengeSchema = z.object({
   cid: z.number(),
@@ -97,6 +116,12 @@ export type Challenge = z.infer<typeof ChallengeSchema>;
 
 export const SeriesDataSchema = SeriesSummarySchema.extend({
   challenges: z.array(ChallengeSchema).default([]),
+  arena_stats: ArenaStatsSchema.default({
+    rank: null,
+    active_players: 0,
+    points: 0,
+    solves: 0,
+  }),
 });
 
 export type SeriesData = z.infer<typeof SeriesDataSchema>;
@@ -152,18 +177,26 @@ function normalizeUserPayload(payload: unknown): UserDetails {
   return UserDetailsSchema.parse(details);
 }
 
+function normalizeLoginPayload(payload: unknown): LoginResult {
+  const raw = payload as Record<string, unknown> | null;
+  return LoginResultSchema.parse({
+    user: normalizeUserPayload(payload),
+    caller: typeof raw?.caller === "string" ? raw.caller : undefined,
+  });
+}
+
 export const api = {
   async identify(): Promise<UserDetails> {
     const payload = await request<unknown>("/auth/");
     return normalizeUserPayload(payload);
   },
 
-  async login(email: string, password: string): Promise<UserDetails> {
+  async login(email: string, password: string): Promise<LoginResult> {
     const payload = await request<unknown>("/auth/", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    return normalizeUserPayload(payload);
+    return normalizeLoginPayload(payload);
   },
 
   async register(email: string, password: string): Promise<{ success: boolean; message: string }> {
