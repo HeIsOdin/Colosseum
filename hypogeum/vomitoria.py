@@ -373,9 +373,10 @@ def login():
         sids=list(details.get("sids", [])),
         is_admin=bool(details.get("is_admin", False)),
     )
+    caller = request.remote_addr or "/"
     login_user(user, remember=True, duration=timedelta(days=1))
 
-    return jsonify({"success": True, "message": message, **details}), status_code
+    return jsonify({"success": True, "message": message, **details, "redirect": caller}), status_code
 
 @vomitoria_bp.delete('/')
 @login_required
