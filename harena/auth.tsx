@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { api, ApiError, type UserDetails } from "./api";
+import { api, ApiError, type LoginResult, type UserDetails } from "./api";
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
 
@@ -15,7 +15,7 @@ type AuthContextValue = {
   user: UserDetails | null;
   status: AuthStatus;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<Pick<LoginResult, "caller">>;
   register: (email: string, password: string) => Promise<string>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -50,9 +50,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
-    const details = await api.login(email, password);
-    setUser(details);
+    const result = await api.login(email, password);
+    setUser(result.user);
     setStatus("authenticated");
+    return { caller: result.caller };
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
