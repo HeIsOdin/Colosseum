@@ -112,6 +112,9 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
 
                 series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 series_data = dict(zip(series_columns, series_row))
+                current_date = datetime.now()
+                if series_data.get('starts_at') is None or series_data['starts_at'] > current_date:
+                    return {}, False, "Series has not started yet.", 403
 
                 cursor.execute(challenges_query, (sid, limit, offset, sid))
                 challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
