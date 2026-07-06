@@ -645,8 +645,8 @@ function SeriesArenaPage() {
           {series?.title || "Series"}
         </Link>
         <nav className="arena-nav" aria-label="Arena navigation">
-          <span className="active"><ArenaFlagIcon /> Challenges</span>
-          <Link to={`/series/${sid}`}>Overview</Link>
+          <span className="active">Arena</span>
+          <Link to={`/series/${sid}/scoreboard`}>Scoreboard</Link>
         </nav>
         <div className="arena-session-box">
           {auth.status === "loading" ? (
@@ -698,6 +698,9 @@ function SeriesArenaPage() {
                   </div>
                 </div>
                 <div className="arena-stat-card">
+                  {/* Put the player's rank here */}
+                </div>
+                <div className="arena-stat-card">
                   <strong>{earnedPoints}</strong>
                   <span>Points</span>
                   <em>{totalPoints ? `${totalPoints} available` : "No points yet"}</em>
@@ -711,7 +714,6 @@ function SeriesArenaPage() {
 
               <div className="arena-list-header">
                 <div>
-                  <p className="eyebrow">{activeCategory || "Arena"}</p>
                   <h1>Challenges</h1>
                 </div>
                 <span>{visibleChallenges.length} listed</span>
@@ -735,7 +737,6 @@ function SeriesArenaPage() {
                         </span>
                         <span className="arena-challenge-points">{challenge.points}</span>
                         <span className="arena-challenge-difficulty">{challenge.difficulty}</span>
-                        <span className="arena-state-pill">{state}</span>
                       </button>
                     );
                   })}
@@ -841,27 +842,22 @@ function ChallengeDetailsPanel({
 
   return (
     <aside className="arena-details-panel">
-      <div className="arena-detail-topline">
-        <span>{challenge.category}</span>
-        <ChallengeStateBadge state={solved ? "solved" : locked ? "locked" : "available"} />
-      </div>
       <h2>{challenge.title}</h2>
       <p className="arena-detail-description">{challenge.description}</p>
 
-      <div className="arena-detail-metrics">
-        <div>
-          <strong>{challenge.points}</strong>
-          <span>Points</span>
-        </div>
-        <div>
-          <strong>{challenge.difficulty}</strong>
-          <span>Difficulty</span>
-        </div>
-        <div>
-          <strong>{challenge.solvers.length}</strong>
-          <span>Solves</span>
-        </div>
-      </div>
+      <form className="arena-flag-form" onSubmit={(e) => {e.preventDefault(); submitMutation.mutate();}}>
+        <label>
+          <input value={flag} onChange={(event) => setFlag(event.target.value)}
+          placeholder="Submit the flag and press enter" disabled={locked || solved} />
+        </label>
+        <button className="solid-button" disabled={locked || solved || submitMutation.isPending || !flag.trim()}>
+          {solved ? <CheckCircle2 size={17} /> : <Flag size={17} />}
+          {solved ? "Solved" : "Submit Flag"}
+        </button>
+      </form>
+
+      {message ? <p className="form-success">{message}</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
 
       {locked ? (
         <div className="arena-warning-panel"><Lock size={18} /> Solve challenge {challenge.prerequisite} first.</div>
@@ -885,31 +881,23 @@ function ChallengeDetailsPanel({
         </div>
       ) : null}
 
-      <form
-        className="arena-flag-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submitMutation.mutate();
-        }}
-      >
-        <label>
-          <span>Recovered flag</span>
-          <input value={flag} onChange={(event) => setFlag(event.target.value)} placeholder="CTF{...}" disabled={locked || solved} />
-        </label>
-        <button className="solid-button" disabled={locked || solved || submitMutation.isPending || !flag.trim()}>
-          {solved ? <CheckCircle2 size={17} /> : <Flag size={17} />}
-          {solved ? "Solved" : "Submit Flag"}
-        </button>
-      </form>
-
-      {message ? <p className="form-success">{message}</p> : null}
-      {error ? <p className="form-error">{error}</p> : null}
+            <div className="arena-detail-metrics">
+        <div>
+          <strong>{challenge.points}</strong>
+          <span>Points</span>
+        </div>
+        <div>
+          <strong>{challenge.difficulty}</strong>
+          <span>Difficulty</span>
+        </div>
+        <div>
+          <strong>{challenge.solvers.length}</strong>
+          <span>Solves</span>
+        </div>
+      </div>
+      
     </aside>
   );
-}
-
-function ChallengeStateBadge({ state }: { state: ChallengeState }) {
-  return <span className={clsx("arena-detail-state", state)}>{state}</span>;
 }
 
 function CategoryGlyph({ category }: { category: string }) {

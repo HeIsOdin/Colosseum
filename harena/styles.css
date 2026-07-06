@@ -495,7 +495,7 @@ button { cursor: pointer; }
   justify-self: start;
   color: var(--ivory);
   font-size: 1.02rem;
-  font-weight: 900;
+  font-weight: 600;
 }
 .arena-title-link:hover { color: var(--gold-bright); }
 .arena-nav {
@@ -503,7 +503,7 @@ button { cursor: pointer; }
   align-items: center;
   gap: 24px;
   color: #9eb0cb;
-  font-weight: 850;
+  font-weight: 600;
 }
 .arena-nav span,
 .arena-nav a {
@@ -533,13 +533,13 @@ button { cursor: pointer; }
 }
 .arena-board {
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr) minmax(330px, 410px);
+  grid-template-columns: 150px minmax(0, 1fr) minmax(330px, 410px);
   gap: 22px;
   align-items: start;
 }
 .arena-left-rail {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: 150px minmax(0, 1fr);
   gap: 18px;
   min-height: calc(100vh - 120px);
 }
@@ -607,7 +607,7 @@ button { cursor: pointer; }
 .arena-main-panel { min-width: 0; display: grid; gap: 18px; }
 .arena-player-strip {
   display: grid;
-  grid-template-columns: minmax(220px, 1.5fr) repeat(2, minmax(130px, 0.7fr));
+  grid-template-columns: minmax(200px, 1fr) repeat(3, minmax(100px, 0.7fr));
   gap: 14px;
 }
 .arena-player-card,
@@ -648,7 +648,7 @@ button { cursor: pointer; }
   color: #98a9c2;
   font-family: "JetBrains Mono", monospace;
   font-size: 0.76rem;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -660,14 +660,14 @@ button { cursor: pointer; }
   align-items: end;
   padding-top: 4px;
 }
-.arena-list-header h1 { margin: 0; font-size: 1.55rem; }
-.arena-list-header > span { color: #8fa2be; font-weight: 800; }
+.arena-list-header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+.arena-list-header > span { color: #8fa2be; font-weight: 600; }
 .arena-challenge-list { display: grid; gap: 8px; }
 .arena-challenge-row {
   width: 100%;
   min-height: 66px;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 90px 130px 96px;
+  grid-template-columns: 42px minmax(0, 1fr) 90px 130px;
   gap: 14px;
   align-items: center;
   border: 1px solid transparent;
@@ -702,18 +702,7 @@ button { cursor: pointer; }
 .arena-challenge-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arena-challenge-title em { color: #7f91aa; font-style: normal; font-size: 0.84rem; }
 .arena-challenge-points,
-.arena-challenge-difficulty { color: #f4eadb; font-weight: 850; }
-.arena-state-pill {
-  justify-self: start;
-  border: 1px solid rgba(183, 192, 207, 0.12);
-  border-radius: 999px;
-  padding: 5px 9px;
-  color: #9eb0cb;
-  background: rgba(255,255,255,0.045);
-  font-size: 0.72rem;
-  font-weight: 900;
-  text-transform: capitalize;
-}
+.arena-challenge-difficulty { color: #f4eadb; font-weight: 600; }
 .arena-challenge-row.available .arena-state-pill { color: var(--gold-bright); border-color: rgba(245, 195, 102, 0.25); }
 .arena-challenge-row.solved .arena-state-pill { color: #dceca9; border-color: rgba(220, 236, 169, 0.28); }
 .arena-empty-list,
@@ -761,8 +750,13 @@ button { cursor: pointer; }
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
-.arena-details-panel h2 { margin: 0; font-size: clamp(1.5rem, 3vw, 2.05rem); line-height: 1.1; }
-.arena-detail-description { color: #9badc7; line-height: 1.6; }
+.arena-details-panel h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.1;
+  font-weight: 600;
+}
+.arena-detail-description { color: #9badc7; line-height: 1.6; font-size: 0.9rem; }
 .arena-detail-state {
   border: 1px solid rgba(183, 192, 207, 0.12);
   border-radius: 999px;
