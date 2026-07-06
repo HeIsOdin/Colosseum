@@ -1,6 +1,6 @@
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -13,6 +13,7 @@ import {
   EyeOff,
   Flag,
   Globe2,
+  HelpCircle,
   Loader2,
   Lock,
   LogOut,
@@ -75,6 +76,48 @@ function getSeriesState(series: Pick<SeriesSummary, "starts_at" | "ends_at">): S
   if (starts > now) return "upcoming";
   if (ends !== null && ends <= now) return "past";
   return "ongoing";
+}
+
+function formatCountdown(
+  label: "Opens" | "Ends",
+  value?: string | null,
+  options: { missing?: string; past?: string } = {},
+) {
+  if (!value) return options.missing ?? "Open-ended";
+  const target = new Date(value).getTime();
+  const delta = target - Date.now();
+  if (!Number.isFinite(target)) return options.missing ?? "Open-ended";
+  if (delta <= 0) return options.past ?? `${label} now`;
+
+  const totalMinutes = Math.ceil(delta / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return `${label} in ${parts.join(" ")}`;
+}
+
+function sanitizeCaller(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = new URL(trimmed, window.location.origin);
+    if (parsed.origin !== window.location.origin) return null;
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    if (!path.startsWith("/") || path.startsWith("//") || path.startsWith("/api")) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
+function currentRoute(location: ReturnType<typeof useLocation>) {
+  return `${location.pathname}${location.search}${location.hash}`;
 }
 
 function getActionLabel(series: SeriesSummary, joined: boolean, loggedIn: boolean) {
@@ -325,6 +368,7 @@ function SeriesOverviewPage() {
   const hostUrl = overview?.host.url?.trim();
   const hostLogoUrl = overview?.host.logo_url?.trim();
   const state = overview ? getSeriesState(overview) : "ongoing";
+  const openCountdown = overview && state === "upcoming" ? formatCountdown("Opens", overview.starts_at) : null;
 
   return (
     <Shell>
@@ -351,8 +395,20 @@ function SeriesOverviewPage() {
               </div>
             </div>
             <div className="overview-actions">
+              {openCountdown ? <span className="countdown-pill overview-countdown">{openCountdown}</span> : null}
               {state === "past" ? (
                 <button className="ghost-button" disabled>Reminisce</button>
+              ) : state === "upcoming" ? (
+                auth.user && !member ? (
+                  <button className="solid-button" onClick={() => joinMutation.mutate()} disabled={joinMutation.isPending}>
+                    {joinMutation.isPending ? <Loader2 className="spin" size={17} /> : null}
+                    Join Series
+                  </button>
+                ) : auth.user ? (
+                  <button className="ghost-button" disabled>Prepare</button>
+                ) : (
+                  <Link className="solid-button" to="/auth" state={{ caller: `/series/${sid}` }}>Login to Join</Link>
+                )
               ) : auth.user ? (
                 member ? (
                   <Link className="solid-button" to={`/series/${sid}/arena`}>Continue <ArrowRight size={17} /></Link>
@@ -363,7 +419,7 @@ function SeriesOverviewPage() {
                   </button>
                 )
               ) : (
-                <Link className="solid-button" to="/auth">Login to Join</Link>
+                <Link className="solid-button" to="/auth" state={{ caller: `/series/${sid}` }}>Login to Join</Link>
               )}
             </div>
           </div>
@@ -418,6 +474,7 @@ function SeriesOverviewPage() {
 function AuthPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -427,6 +484,10 @@ function AuthPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const locationState = location.state as { caller?: unknown } | null;
+  const queryCaller = new URLSearchParams(location.search).get("caller");
+  const returnTarget = sanitizeCaller(locationState?.caller) ?? sanitizeCaller(queryCaller) ?? "/";
 
   function switchMode(nextMode: "login" | "register") {
     setMode(nextMode);
@@ -444,8 +505,8 @@ function AuthPage() {
     setMessage(null);
     try {
       if (mode === "login") {
-        await auth.login(email, password);
-        navigate("/");
+        const result = await auth.login(email, password);
+        navigate(sanitizeCaller(result.caller) ?? returnTarget, { replace: true });
       } else {
         if (password !== confirmPassword) {
           setError("Passwords do not match.");
@@ -464,7 +525,7 @@ function AuthPage() {
     }
   }
 
-  if (auth.status === "authenticated") return <Navigate to="/" replace />;
+  if (auth.status === "authenticated") return <Navigate to={returnTarget} replace />;
 
   return (
     <main className="auth-page">
@@ -483,9 +544,11 @@ function AuthPage() {
         </div>
 
         <form className="auth-form" onSubmit={onSubmit}>
-          <label className="auth-field">
+          <label className="auth-field" htmlFor="auth-email">
             <span>Email</span>
             <input
+              id="auth-email"
+              name="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               type="email"
@@ -494,10 +557,12 @@ function AuthPage() {
             />
           </label>
 
-          <label className="auth-field">
+          <label className="auth-field" htmlFor="auth-password">
             <span>Password</span>
             <div className="auth-password-control">
               <input
+                id="auth-password"
+                name="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 type={showPassword ? "text" : "password"}
@@ -515,10 +580,12 @@ function AuthPage() {
           </label>
 
           {mode === "register" ? (
-            <label className="auth-field">
+            <label className="auth-field" htmlFor="auth-confirm-password">
               <span>Confirm password</span>
               <div className="auth-password-control">
                 <input
+                  id="auth-confirm-password"
+                  name="confirm-password"
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   type={showConfirmPassword ? "text" : "password"}
@@ -568,6 +635,7 @@ function SeriesArenaPage() {
   const sid = Number(sidParam);
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [selectedCid, setSelectedCid] = useState<number | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -628,15 +696,22 @@ function SeriesArenaPage() {
     () => playerQuery.data?.solves.filter((solve) => solve.sid === sid) ?? [],
     [playerQuery.data?.solves, sid],
   );
-  const earnedPoints = seriesSolves.reduce((total, solve) => total + solve.points, 0);
+  const earnedPoints = series?.arena_stats.points ?? seriesSolves.reduce((total, solve) => total + solve.points, 0);
   const totalPoints = series?.challenges.reduce((total, challenge) => total + challenge.points, 0) ?? 0;
   const solvedCount = series?.challenges.filter((challenge) => solvedIds.has(challenge.cid)).length ?? 0;
   const totalChallenges = series?.challenges.length ?? 0;
   const allSolved = totalChallenges > 0 && solvedCount === totalChallenges;
-  const playerLabel = playerQuery.data?.display_name || auth.user?.pid.slice(0, 8) || "Player";
+  const playerLabel = playerQuery.data?.display_name || auth.user?.display_name || auth.user?.pid.slice(0, 8) || "Player";
   const playerInitial = playerLabel.slice(0, 1).toUpperCase();
+  const rankLabel = series?.arena_stats.rank ? `#${series.arena_stats.rank}` : "—";
+  const activePlayers = series?.arena_stats.active_players ?? 0;
+  const activePlayersLabel = activePlayers === 1 ? "1 active player" : activePlayers ? `${activePlayers} active players` : "No active players";
+  const arenaCountdown = series ? formatCountdown("Ends", series.ends_at, { missing: "Open-ended", past: "Series ended" }) : null;
+  const isUpcomingBlocked = seriesQuery.error instanceof ApiError && seriesQuery.error.status === 403;
 
-  if (auth.status === "anonymous") return <Navigate to="/auth" replace />;
+  if (auth.status === "anonymous") {
+    return <Navigate to="/auth" replace state={{ caller: currentRoute(location) }} />;
+  }
 
   return (
     <main className="arena-page">
@@ -649,6 +724,10 @@ function SeriesArenaPage() {
           <Link to={`/series/${sid}/scoreboard`}>Scoreboard</Link>
         </nav>
         <div className="arena-session-box">
+          {arenaCountdown ? <span className="countdown-pill arena-countdown">{arenaCountdown}</span> : null}
+          <button className="arena-help-button" type="button" aria-label="Arena help" title="Arena help">
+            <HelpCircle size={18} />
+          </button>
           {auth.status === "loading" ? (
             <span className="muted inline-status"><Loader2 size={15} className="spin" />Checking session</span>
           ) : auth.user ? (
@@ -659,7 +738,15 @@ function SeriesArenaPage() {
 
       <section className="arena-shell">
         {seriesQuery.isLoading || auth.status === "loading" ? <LoadingCard label="Opening arena" /> : null}
-        {seriesQuery.error ? <ErrorCard message={errorMessage(seriesQuery.error)} /> : null}
+        {seriesQuery.error && !isUpcomingBlocked ? <ErrorCard message={errorMessage(seriesQuery.error)} /> : null}
+        {isUpcomingBlocked ? (
+          <div className="arena-locked-state">
+            <Lock size={34} />
+            <h1>This series has not opened yet.</h1>
+            <p>Return to the overview to see the opening countdown and prepare before the arena unlocks.</p>
+            <Link className="solid-button" to={`/series/${sid}`}>Back to Overview</Link>
+          </div>
+        ) : null}
 
         {series ? (
           <div className="arena-board">
@@ -693,12 +780,14 @@ function SeriesArenaPage() {
                 <div className="arena-player-card">
                   <span className="arena-avatar">{playerInitial}</span>
                   <div>
-                    <strong>{playerLabel}</strong>
+                    <Link className="arena-player-name" to="/profile">{playerLabel}</Link>
                     <span>Challenger</span>
                   </div>
                 </div>
                 <div className="arena-stat-card">
-                  {/* Put the player's rank here */}
+                  <strong>{rankLabel}</strong>
+                  <span>Rank</span>
+                  <em>{activePlayersLabel}</em>
                 </div>
                 <div className="arena-stat-card">
                   <strong>{earnedPoints}</strong>
@@ -840,20 +929,25 @@ function ChallengeDetailsPanel({
     );
   }
 
+  const flagDisabled = locked || solved || submitMutation.isPending || !flag.trim();
+
   return (
     <aside className="arena-details-panel">
       <h2>{challenge.title}</h2>
       <p className="arena-detail-description">{challenge.description}</p>
 
-      <form className="arena-flag-form" onSubmit={(e) => {e.preventDefault(); submitMutation.mutate();}}>
-        <label>
-          <input value={flag} onChange={(event) => setFlag(event.target.value)}
-          placeholder="Submit the flag and press enter" disabled={locked || solved} />
+      <form className="arena-flag-form" onSubmit={(event) => { event.preventDefault(); if (!flagDisabled) submitMutation.mutate(); }}>
+        <label className="arena-flag-control">
+          <input
+            value={flag}
+            onChange={(event) => setFlag(event.target.value)}
+            placeholder="Submit the flag and press enter"
+            disabled={locked || solved}
+          />
+          <button className="arena-flag-submit" type="submit" disabled={flagDisabled} aria-label="Submit flag">
+            {submitMutation.isPending ? <Loader2 className="spin" size={16} /> : solved ? <CheckCircle2 size={16} /> : <ArrowRight size={16} />}
+          </button>
         </label>
-        <button className="solid-button" disabled={locked || solved || submitMutation.isPending || !flag.trim()}>
-          {solved ? <CheckCircle2 size={17} /> : <Flag size={17} />}
-          {solved ? "Solved" : "Submit Flag"}
-        </button>
       </form>
 
       {message ? <p className="form-success">{message}</p> : null}
@@ -881,7 +975,7 @@ function ChallengeDetailsPanel({
         </div>
       ) : null}
 
-            <div className="arena-detail-metrics">
+      <div className="arena-detail-metrics">
         <div>
           <strong>{challenge.points}</strong>
           <span>Points</span>
@@ -895,7 +989,6 @@ function ChallengeDetailsPanel({
           <span>Solves</span>
         </div>
       </div>
-      
     </aside>
   );
 }
@@ -964,13 +1057,14 @@ function ArenaEmptyIcon() {
 
 function ProfilePage() {
   const auth = useAuth();
+  const location = useLocation();
   const playerQuery = useQuery({
     queryKey: ["player", auth.user?.pid],
     queryFn: () => api.getPlayer(auth.user!.pid),
     enabled: Boolean(auth.user?.pid),
   });
 
-  if (auth.status === "anonymous") return <Navigate to="/auth" replace />;
+  if (auth.status === "anonymous") return <Navigate to="/auth" replace state={{ caller: currentRoute(location) }} />;
 
   return (
     <Shell>
@@ -996,6 +1090,7 @@ function ProfilePage() {
 
 function AdminPage() {
   const auth = useAuth();
+  const location = useLocation();
   const [seriesStatus, setSeriesStatus] = useState<string | null>(null);
   const [challengeStatus, setChallengeStatus] = useState<string | null>(null);
 
@@ -1042,7 +1137,7 @@ function AdminPage() {
     onError: (err) => setChallengeStatus(errorMessage(err)),
   });
 
-  if (auth.status === "anonymous") return <Navigate to="/auth" replace />;
+  if (auth.status === "anonymous") return <Navigate to="/auth" replace state={{ caller: currentRoute(location) }} />;
   if (auth.user && !auth.user.is_admin) return <Navigate to="/" replace />;
 
   return (
