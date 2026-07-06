@@ -17,10 +17,13 @@ import psycopg2.sql as sql
 vomitoria_bp = Blueprint('vomitoria', __name__, url_prefix='/auth')
 
 class User(UserMixin):
-    def __init__(self, pid: uuid.UUID, sids: list | None = None, is_admin: bool = False):
+    def __init__(self, pid: uuid.UUID, sids: list | None = None, is_admin: bool = False,
+                 display_name: str = "Anonymous", avatar: str = "default"):
         self.id = pid
         self.sids = sids or []
         self.is_admin = is_admin
+        self.display_name = display_name
+        self.avatar = avatar
 
 @login_manager.unauthorized_handler
 def unauthorized():
@@ -44,7 +47,8 @@ def load_user(user_id: str) -> User | None:
         memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
 
         query = sql.SQL("""
-            SELECT u.pid, u.is_admin, COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
+            SELECT u.pid, u.is_admin, u.display_name, u.avatar,
+            COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
             FROM {users} u
             LEFT JOIN {memberships} m ON u.pid = m.pid
             WHERE u.pid = %s
@@ -62,7 +66,7 @@ def load_user(user_id: str) -> User | None:
         if row is None:
             return None
 
-        return User(pid=row[0], is_admin=bool(row[1]), sids=list(row[2] or []))
+        return User(pid=row[0], is_admin=bool(row[1]), sids=list(row[2] or []), display_name=row[3] or "Anonymous", avatar=row[4] or "default")
 
     except Exception as e:
         logger.exception(f"Error loading user {user_id}: {e}")
@@ -256,7 +260,9 @@ def flag_hash(flag: str) -> str:
 
 # -- Authentication --
 
-def _identify(pid: uuid.UUID, sids: list[int], is_admin: bool) -> tuple[dict, bool, str, int]:
+def _identify(pid: uuid.UUID, sids: list[int], is_admin: bool,
+              display_name: str = "Anonymous", avatar: str = "default"
+            ) -> tuple[dict, bool, str, int]:
     """
     Identify the user based on their PID, series IDs, and admin status.
 
@@ -271,6 +277,8 @@ def _identify(pid: uuid.UUID, sids: list[int], is_admin: bool) -> tuple[dict, bo
         "pid": str(pid),
         "sids": sids,
         "is_admin": is_admin,
+        "display_name": display_name,
+        "avatar": avatar
     }, True, "", 200
 
 @vomitoria_bp.get('/')
@@ -279,8 +287,10 @@ def identify():
     pid = as_uuid(current_user.id)
     sids = current_user.sids
     is_admin = current_user.is_admin
+    display_name = getattr(current_user, "display_name", "Anonymous")
+    avatar = getattr(current_user, "avatar", "default")
 
-    details, success, message, status_code = _identify(pid, sids, is_admin)
+    details, success, message, status_code = _identify(pid, sids, is_admin, display_name, avatar)
 
     if not success:
         return jsonify({"success": False, "message": message}), status_code
