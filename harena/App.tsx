@@ -1,5 +1,4 @@
-import { type CSSProperties, type FormEvent, useMemo, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -35,11 +34,10 @@ import {
   type SeriesSummary,
 } from "./api";
 import { useAuth } from "./auth";
-import { getCampaignModule } from "./campaigns";
-import biafraDossier from "./assets/biafra-dossier.svg";
 
 type SeriesFilter = "ongoing" | "upcoming" | "joined" | "past";
 type SeriesState = "ongoing" | "upcoming" | "past";
+type ChallengeState = "available" | "locked" | "solved";
 
 const seriesTabs: Array<{ key: SeriesFilter; label: string }> = [
   { key: "ongoing", label: "Ongoing" },
@@ -47,6 +45,12 @@ const seriesTabs: Array<{ key: SeriesFilter; label: string }> = [
   { key: "joined", label: "Joined" },
   { key: "past", label: "Past" },
 ];
+
+const stateOrder: Record<ChallengeState, number> = {
+  available: 0,
+  locked: 1,
+  solved: 2,
+};
 
 function formatDate(value?: string | null) {
   if (!value) return "Open-ended";
@@ -115,6 +119,12 @@ function parseMetadataJson(raw: string): Record<string, unknown> {
     throw new Error("Metadata must be a JSON object.");
   }
   return parsed as Record<string, unknown>;
+}
+
+function getChallengeState(challenge: Challenge, solvedIds: Set<number>): ChallengeState {
+  if (solvedIds.has(challenge.cid)) return "solved";
+  if (challenge.prerequisite && !solvedIds.has(challenge.prerequisite)) return "locked";
+  return "available";
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -557,8 +567,15 @@ function SeriesArenaPage() {
   const { sid: sidParam } = useParams();
   const sid = Number(sidParam);
   const auth = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<Challenge | null>(null);
+  const [selectedCid, setSelectedCid] = useState<number | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+  async function logoutAndRedirect() {
+    await auth.logout();
+    navigate("/");
+  }
 
   const seriesQuery = useQuery({
     queryKey: ["series", sid],
@@ -572,122 +589,211 @@ function SeriesArenaPage() {
     enabled: Boolean(auth.user?.pid),
   });
 
-  const joinMutation = useMutation({
-    mutationFn: () => api.joinSeries(sid),
-    onSuccess: async () => {
-      await auth.refresh();
-      await queryClient.invalidateQueries({ queryKey: ["series", sid] });
-    },
-  });
-
-  const leaveMutation = useMutation({
-    mutationFn: () => api.leaveSeries(sid),
-    onSuccess: async () => {
-      await auth.refresh();
-      await queryClient.invalidateQueries({ queryKey: ["series", sid] });
-    },
-  });
-
   const solvedIds = useMemo(
     () => new Set(playerQuery.data?.solves.filter((solve) => solve.sid === sid).map((solve) => solve.cid) ?? []),
     [playerQuery.data?.solves, sid],
   );
 
   const series = seriesQuery.data;
-  const campaign = getCampaignModule(series);
-  const member = auth.isMemberOf(sid);
+  const selectedChallenge = useMemo(
+    () => series?.challenges.find((challenge) => challenge.cid === selectedCid) ?? null,
+    [series?.challenges, selectedCid],
+  );
+
+  const categoryGroups = useMemo(() => {
+    const groups = new Map<string, Challenge[]>();
+    for (const challenge of series?.challenges ?? []) {
+      const category = challenge.category || "Misc";
+      groups.set(category, [...(groups.get(category) ?? []), challenge]);
+    }
+    return Array.from(groups.entries()).map(([name, challenges]) => ({ name, challenges }));
+  }, [series?.challenges]);
+
+  const activeCategory = useMemo(() => {
+    if (selectedCategory && categoryGroups.some((group) => group.name === selectedCategory)) {
+      return selectedCategory;
+    }
+    return categoryGroups[0]?.name ?? "";
+  }, [categoryGroups, selectedCategory]);
+
+  const visibleChallenges = useMemo(() => {
+    return (series?.challenges ?? [])
+      .map((challenge, index) => ({ challenge, index, state: getChallengeState(challenge, solvedIds) }))
+      .filter((entry) => !activeCategory || entry.challenge.category === activeCategory)
+      .sort((a, b) => stateOrder[a.state] - stateOrder[b.state] || a.index - b.index)
+      .map((entry) => entry.challenge);
+  }, [activeCategory, series?.challenges, solvedIds]);
+
+  const seriesSolves = useMemo(
+    () => playerQuery.data?.solves.filter((solve) => solve.sid === sid) ?? [],
+    [playerQuery.data?.solves, sid],
+  );
+  const earnedPoints = seriesSolves.reduce((total, solve) => total + solve.points, 0);
+  const totalPoints = series?.challenges.reduce((total, challenge) => total + challenge.points, 0) ?? 0;
+  const solvedCount = series?.challenges.filter((challenge) => solvedIds.has(challenge.cid)).length ?? 0;
+  const totalChallenges = series?.challenges.length ?? 0;
+  const allSolved = totalChallenges > 0 && solvedCount === totalChallenges;
+  const playerLabel = playerQuery.data?.display_name || auth.user?.pid.slice(0, 8) || "Player";
+  const playerInitial = playerLabel.slice(0, 1).toUpperCase();
 
   if (auth.status === "anonymous") return <Navigate to="/auth" replace />;
 
   return (
-    <Shell>
-      {seriesQuery.isLoading || auth.status === "loading" ? <LoadingCard label="Opening arena" /> : null}
-      {seriesQuery.error ? <ErrorCard message={errorMessage(seriesQuery.error)} /> : null}
-      {series ? (
-        <>
-          <section className="campaign-hero">
-            <div>
-              <p className="eyebrow">{campaign.eyebrow}</p>
-              <h1>{series.title}</h1>
-              <p>{campaign.intro(series)}</p>
-              <div className="campaign-meta">
-                <span>{formatDate(series.starts_at)}</span>
-                <span>{series.ends_at ? `Ends ${formatDate(series.ends_at)}` : "No end date"}</span>
-                <span>{series.challenges.length} challenges</span>
+    <main className="arena-page">
+      <header className="arena-topbar">
+        <Link className="arena-title-link" to="/" aria-label="Back to series list">
+          {series?.title || "Series"}
+        </Link>
+        <nav className="arena-nav" aria-label="Arena navigation">
+          <span className="active"><ArenaFlagIcon /> Challenges</span>
+          <Link to={`/series/${sid}`}>Overview</Link>
+        </nav>
+        <div className="arena-session-box">
+          {auth.status === "loading" ? (
+            <span className="muted inline-status"><Loader2 size={15} className="spin" />Checking session</span>
+          ) : auth.user ? (
+            <AccountMenu onLogout={logoutAndRedirect} />
+          ) : null}
+        </div>
+      </header>
+
+      <section className="arena-shell">
+        {seriesQuery.isLoading || auth.status === "loading" ? <LoadingCard label="Opening arena" /> : null}
+        {seriesQuery.error ? <ErrorCard message={errorMessage(seriesQuery.error)} /> : null}
+
+        {series ? (
+          <div className="arena-board">
+            <aside className="arena-left-rail">
+              <div className="arena-series-image">
+                {series.image ? <img src={series.image} alt="" /> : <div className="arena-series-fallback" />}
               </div>
-            </div>
-            <div className="join-panel">
-              <img src={series.image || biafraDossier} alt="" />
-              {member ? (
-                <button className="ghost-button" onClick={() => leaveMutation.mutate()} disabled={leaveMutation.isPending}>Leave series</button>
+              <div className="arena-category-list" aria-label="Challenge categories">
+                {categoryGroups.map((group) => {
+                  const solvedInCategory = group.challenges.filter((challenge) => solvedIds.has(challenge.cid)).length;
+                  return (
+                    <button
+                      key={group.name}
+                      type="button"
+                      className={clsx("arena-category-button", activeCategory === group.name && "active")}
+                      onClick={() => setSelectedCategory(group.name)}
+                    >
+                      <span className="arena-category-icon"><CategoryGlyph category={group.name} /></span>
+                      <span className="arena-category-copy">
+                        <strong>{group.name}</strong>
+                        <em>{solvedInCategory}/{group.challenges.length} solved</em>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+
+            <section className="arena-main-panel">
+              <div className="arena-player-strip">
+                <div className="arena-player-card">
+                  <span className="arena-avatar">{playerInitial}</span>
+                  <div>
+                    <strong>{playerLabel}</strong>
+                    <span>Challenger</span>
+                  </div>
+                </div>
+                <div className="arena-stat-card">
+                  <strong>{earnedPoints}</strong>
+                  <span>Points</span>
+                  <em>{totalPoints ? `${totalPoints} available` : "No points yet"}</em>
+                </div>
+                <div className="arena-stat-card">
+                  <strong>{solvedCount}/{totalChallenges}</strong>
+                  <span>Flags</span>
+                  <em>{allSolved ? "Complete" : "In progress"}</em>
+                </div>
+              </div>
+
+              <div className="arena-list-header">
+                <div>
+                  <p className="eyebrow">{activeCategory || "Arena"}</p>
+                  <h1>Challenges</h1>
+                </div>
+                <span>{visibleChallenges.length} listed</span>
+              </div>
+
+              {visibleChallenges.length > 0 ? (
+                <div className="arena-challenge-list">
+                  {visibleChallenges.map((challenge) => {
+                    const state = getChallengeState(challenge, solvedIds);
+                    return (
+                      <button
+                        key={challenge.cid}
+                        type="button"
+                        className={clsx("arena-challenge-row", state, selectedCid === challenge.cid && "selected")}
+                        onClick={() => setSelectedCid(challenge.cid)}
+                      >
+                        <span className="arena-challenge-state"><ChallengeStateGlyph state={state} /></span>
+                        <span className="arena-challenge-title">
+                          <strong>{challenge.title}</strong>
+                          <em>{challenge.solvers.length} solves</em>
+                        </span>
+                        <span className="arena-challenge-points">{challenge.points}</span>
+                        <span className="arena-challenge-difficulty">{challenge.difficulty}</span>
+                        <span className="arena-state-pill">{state}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
-                <button className="solid-button" onClick={() => joinMutation.mutate()} disabled={joinMutation.isPending}>Join series</button>
+                <div className="arena-empty-list">
+                  <ArenaEmptyIcon />
+                  <strong>No challenges in this category yet.</strong>
+                  <span>Try another category or return when more challenges have been added.</span>
+                </div>
               )}
-              <Link className="ghost-button" to={`/series/${sid}`}>Overview</Link>
-            </div>
-          </section>
+            </section>
 
-          <section className="challenge-grid">
-            {series.challenges.map((challenge) => {
-              const solved = solvedIds.has(challenge.cid);
-              const locked = Boolean(challenge.prerequisite && !solvedIds.has(challenge.prerequisite));
-              return (
-                <button
-                  key={challenge.cid}
-                  className={clsx("challenge-card", solved && "solved", locked && "locked")}
-                  onClick={() => setSelected(challenge)}
-                >
-                  <div className="challenge-topline">
-                    <span>{campaign.classifyChallenge(challenge)}</span>
-                    {locked ? <Lock size={16} /> : solved ? <CheckCircle2 size={16} /> : <Flag size={16} />}
-                  </div>
-                  <h3>{challenge.title}</h3>
-                  <p>{challenge.description}</p>
-                  <div className="challenge-badges">
-                    <span>{challenge.points} pts</span>
-                    <span>{challenge.difficulty}</span>
-                    <span>{challenge.category}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </section>
-
-          <ChallengeDialog
-            sid={sid}
-            challenge={selected}
-            locked={Boolean(selected?.prerequisite && !solvedIds.has(selected.prerequisite))}
-            solved={Boolean(selected && solvedIds.has(selected.cid))}
-            onClose={() => setSelected(null)}
-            onSolved={() => {
-              void queryClient.invalidateQueries({ queryKey: ["player", auth.user?.pid] });
-              void queryClient.invalidateQueries({ queryKey: ["series", sid] });
-            }}
-          />
-        </>
-      ) : null}
-    </Shell>
+            <ChallengeDetailsPanel
+              sid={sid}
+              challenge={selectedChallenge}
+              noChallenges={totalChallenges === 0}
+              allSolved={allSolved}
+              solved={Boolean(selectedChallenge && solvedIds.has(selectedChallenge.cid))}
+              locked={Boolean(selectedChallenge?.prerequisite && !solvedIds.has(selectedChallenge.prerequisite))}
+              onSolved={() => {
+                void queryClient.invalidateQueries({ queryKey: ["player", auth.user?.pid] });
+                void queryClient.invalidateQueries({ queryKey: ["series", sid] });
+              }}
+            />
+          </div>
+        ) : null}
+      </section>
+    </main>
   );
 }
 
-function ChallengeDialog({
+function ChallengeDetailsPanel({
   sid,
   challenge,
-  locked,
+  noChallenges,
+  allSolved,
   solved,
-  onClose,
+  locked,
   onSolved,
 }: {
   sid: number;
   challenge: Challenge | null;
-  locked: boolean;
+  noChallenges: boolean;
+  allSolved: boolean;
   solved: boolean;
-  onClose: () => void;
+  locked: boolean;
   onSolved: () => void;
 }) {
   const [flag, setFlag] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFlag("");
+    setMessage(null);
+    setError(null);
+  }, [challenge?.cid]);
 
   const submitMutation = useMutation({
     mutationFn: () => api.submitFlag(sid, challenge!.cid, flag),
@@ -709,72 +815,163 @@ function ChallengeDialog({
     onError: (err) => setError(errorMessage(err)),
   });
 
+  if (noChallenges) {
+    return (
+      <aside className="arena-details-panel empty">
+        <ArenaEmptyIcon />
+        <h2>No challenges published yet.</h2>
+        <p>This series is open, but the arena has not received its challenge files.</p>
+      </aside>
+    );
+  }
+
+  if (!challenge) {
+    return (
+      <aside className="arena-details-panel empty">
+        {allSolved ? <CheckCircle2 size={42} /> : <ArenaEmptyIcon />}
+        <h2>{allSolved ? "Arena conquered." : "Select a challenge."}</h2>
+        <p>
+          {allSolved
+            ? "You have solved every challenge in this series. Excellent work."
+            : "Choose a challenge from the list to view its story, files, instance controls, and flag submission."}
+        </p>
+      </aside>
+    );
+  }
+
   return (
-    <Dialog.Root open={Boolean(challenge)} onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="challenge-dialog">
-          {challenge ? (
-            <>
-              <div className="dialog-header">
-                <div>
-                  <p className="eyebrow">{challenge.category} / {challenge.difficulty}</p>
-                  <Dialog.Title>{challenge.title}</Dialog.Title>
-                </div>
-                <Dialog.Close className="ghost-button compact">Close</Dialog.Close>
-              </div>
-              <div className="challenge-body">
-                <p>{challenge.description}</p>
-                <div className="challenge-badges wide">
-                  <span>{challenge.points} points</span>
-                  <span>Author: {challenge.author || "Colosseum"}</span>
-                  <span>{challenge.solvers.length} solves</span>
-                </div>
+    <aside className="arena-details-panel">
+      <div className="arena-detail-topline">
+        <span>{challenge.category}</span>
+        <ChallengeStateBadge state={solved ? "solved" : locked ? "locked" : "available"} />
+      </div>
+      <h2>{challenge.title}</h2>
+      <p className="arena-detail-description">{challenge.description}</p>
 
-                {locked ? (
-                  <div className="locked-panel"><Lock size={18} /> Solve challenge {challenge.prerequisite} first.</div>
-                ) : null}
+      <div className="arena-detail-metrics">
+        <div>
+          <strong>{challenge.points}</strong>
+          <span>Points</span>
+        </div>
+        <div>
+          <strong>{challenge.difficulty}</strong>
+          <span>Difficulty</span>
+        </div>
+        <div>
+          <strong>{challenge.solvers.length}</strong>
+          <span>Solves</span>
+        </div>
+      </div>
 
-                {challenge.file_url ? (
-                  <a className="download-panel" href={challenge.file_url} download>
-                    <Download size={20} />
-                    <span>Download challenge archive</span>
-                  </a>
-                ) : null}
+      {locked ? (
+        <div className="arena-warning-panel"><Lock size={18} /> Solve challenge {challenge.prerequisite} first.</div>
+      ) : null}
 
-                {challenge.requires_instance ? (
-                  <div className="instance-panel">
-                    <h4><Radio size={18} /> Instance control</h4>
-                    <div className="button-row">
-                      <button className="solid-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("start")}><Play size={15} /> Start</button>
-                      <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("restart")}><RotateCcw size={15} /> Restart</button>
-                      <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("stop")}><Square size={15} /> Stop</button>
-                    </div>
-                  </div>
-                ) : null}
+      {challenge.file_url ? (
+        <a className="arena-download-panel" href={challenge.file_url} download>
+          <Download size={20} />
+          <span>Download challenge archive</span>
+        </a>
+      ) : null}
 
-                <form
-                  className="flag-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    submitMutation.mutate();
-                  }}
-                >
-                  <label>Recovered flag<input value={flag} onChange={(event) => setFlag(event.target.value)} placeholder="CTF{...}" disabled={locked || solved} /></label>
-                  <button className="solid-button" disabled={locked || solved || submitMutation.isPending || !flag.trim()}>
-                    {solved ? <CheckCircle2 size={17} /> : <Flag size={17} />}
-                    {solved ? "Solved" : "Submit Flag"}
-                  </button>
-                </form>
-                {message ? <p className="form-success">{message}</p> : null}
-                {error ? <p className="form-error">{error}</p> : null}
-              </div>
-            </>
-          ) : null}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      {challenge.requires_instance ? (
+        <div className="arena-instance-panel">
+          <h3><Radio size={18} /> Instance control</h3>
+          <div className="arena-instance-actions">
+            <button className="solid-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("start")}><Play size={15} /> Start</button>
+            <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("restart")}><RotateCcw size={15} /> Restart</button>
+            <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("stop")}><Square size={15} /> Stop</button>
+          </div>
+        </div>
+      ) : null}
+
+      <form
+        className="arena-flag-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submitMutation.mutate();
+        }}
+      >
+        <label>
+          <span>Recovered flag</span>
+          <input value={flag} onChange={(event) => setFlag(event.target.value)} placeholder="CTF{...}" disabled={locked || solved} />
+        </label>
+        <button className="solid-button" disabled={locked || solved || submitMutation.isPending || !flag.trim()}>
+          {solved ? <CheckCircle2 size={17} /> : <Flag size={17} />}
+          {solved ? "Solved" : "Submit Flag"}
+        </button>
+      </form>
+
+      {message ? <p className="form-success">{message}</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+    </aside>
   );
+}
+
+function ChallengeStateBadge({ state }: { state: ChallengeState }) {
+  return <span className={clsx("arena-detail-state", state)}>{state}</span>;
+}
+
+function CategoryGlyph({ category }: { category: string }) {
+  const key = category.toLowerCase();
+  if (key.includes("web")) return <WebGlyph />;
+  if (key.includes("crypto")) return <CryptoGlyph />;
+  if (key.includes("forensic")) return <ForensicsGlyph />;
+  if (key.includes("pwn") || key.includes("exploit")) return <PwnGlyph />;
+  if (key.includes("reverse") || key.includes("re")) return <ReverseGlyph />;
+  if (key.includes("warm") || key.includes("sanity")) return <WarmupGlyph />;
+  if (key.includes("hardware") || key.includes("ics")) return <HardwareGlyph />;
+  return <MiscGlyph />;
+}
+
+function ChallengeStateGlyph({ state }: { state: ChallengeState }) {
+  if (state === "solved") return <SolvedGlyph />;
+  if (state === "locked") return <LockedGlyph />;
+  return <AvailableGlyph />;
+}
+
+function SvgBase({ children }: { children: React.ReactNode }) {
+  return <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">{children}</svg>;
+}
+
+function ArenaFlagIcon() {
+  return <SvgBase><path d="M8 25V6h2v3h12l-2 4 2 4H10v8H8Z" /></SvgBase>;
+}
+function WebGlyph() {
+  return <SvgBase><rect x="6" y="8" width="20" height="16" rx="3" /><path d="M6 13h20M11 18h5M11 22h10" /></SvgBase>;
+}
+function CryptoGlyph() {
+  return <SvgBase><circle cx="12" cy="13" r="5" /><path d="M16 17l8 8M21 22l3-3M18.5 19.5l2-2" /></SvgBase>;
+}
+function ForensicsGlyph() {
+  return <SvgBase><path d="M9 6h10l4 4v16H9z" /><path d="M18 6v5h5M12 17h8M12 21h6" /></SvgBase>;
+}
+function PwnGlyph() {
+  return <SvgBase><path d="M10 25h12M12 22h8l2-12-6-4-6 4z" /><path d="M13 13h6M14 17h4" /></SvgBase>;
+}
+function ReverseGlyph() {
+  return <SvgBase><path d="M9 11h12l-4-4M23 21H11l4 4" /><path d="M21 11l-4 4M11 21l4-4" /></SvgBase>;
+}
+function WarmupGlyph() {
+  return <SvgBase><path d="M16 27c5 0 8-3 8-8 0-6-5-8-6-14-4 3-9 7-9 14 0 5 3 8 7 8Z" /><path d="M16 23c2 0 4-2 4-4 0-3-2-4-3-7-2 2-5 4-5 7 0 2 2 4 4 4Z" /></SvgBase>;
+}
+function HardwareGlyph() {
+  return <SvgBase><rect x="9" y="9" width="14" height="14" rx="2" /><path d="M13 5v4M19 5v4M13 23v4M19 23v4M5 13h4M5 19h4M23 13h4M23 19h4" /></SvgBase>;
+}
+function MiscGlyph() {
+  return <SvgBase><path d="M16 5l3 7 7 1-5 5 1 8-6-4-6 4 1-8-5-5 7-1z" /></SvgBase>;
+}
+function SolvedGlyph() {
+  return <SvgBase><circle cx="16" cy="16" r="11" /><path d="M10 16l4 4 8-9" /></SvgBase>;
+}
+function LockedGlyph() {
+  return <SvgBase><rect x="8" y="14" width="16" height="12" rx="2" /><path d="M11 14v-3a5 5 0 0 1 10 0v3" /></SvgBase>;
+}
+function AvailableGlyph() {
+  return <SvgBase><path d="M16 6l10 10-10 10L6 16z" /><circle cx="16" cy="16" r="3" /></SvgBase>;
+}
+function ArenaEmptyIcon() {
+  return <SvgBase><path d="M7 18h5l3 4 5-12 3 8h2" /><circle cx="16" cy="16" r="12" /></SvgBase>;
 }
 
 function ProfilePage() {
