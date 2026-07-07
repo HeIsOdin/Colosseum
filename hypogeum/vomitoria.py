@@ -66,7 +66,14 @@ def load_user(user_id: str) -> User | None:
         if row is None:
             return None
 
-        return User(pid=row[0], is_admin=bool(row[1]), sids=list(row[2] or []), display_name=row[3] or "Anonymous", avatar=row[4] or "default")
+        pid, is_admin, display_name, avatar, sids = row
+        return User(
+            pid=pid,
+            is_admin=bool(is_admin),
+            sids=list(sids or []),
+            display_name=display_name or "Anonymous",
+            avatar=avatar or "default",
+        )
 
     except Exception as e:
         logger.exception(f"Error loading user {user_id}: {e}")
