@@ -924,7 +924,7 @@ function ChallengeDetailsPanel({
           <input
             value={flag}
             onChange={(event) => setFlag(event.target.value)}
-            placeholder="Submit the flag and press enter"
+            placeholder={locked ? `Solve challenge ${challenge.prerequisite} first` : "Submit the flag and press enter"}
             disabled={locked || solved}
           />
           <button className="arena-flag-submit" type="submit" disabled={flagDisabled} aria-label="Submit flag">
@@ -935,10 +935,6 @@ function ChallengeDetailsPanel({
 
       {message ? <p className="form-success">{message}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
-
-      {locked ? (
-        <div className="arena-warning-panel"><Lock size={18} /> Solve challenge {challenge.prerequisite} first.</div>
-      ) : null}
 
       {challenge.file_url ? (
         <a className="arena-download-panel" href={challenge.file_url} download>
