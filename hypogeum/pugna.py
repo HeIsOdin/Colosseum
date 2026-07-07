@@ -36,7 +36,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
         if unknown:
             return "", False, f"Unsupported fields: {', '.join(sorted(unknown))}", 400
 
-        missing = [field for field in required if not challenge.get(field)]
+        missing = [field for field in required if not str(challenge.get(field))]
         if missing:
             return "", False, f"Missing required fields: {', '.join(missing)}", 400
 
