@@ -1,4 +1,4 @@
-import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -11,7 +11,6 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
-  Flag,
   Globe2,
   HelpCircle,
   Loader2,
@@ -35,6 +34,7 @@ import {
   type SeriesSummary,
 } from "./api";
 import { useAuth } from "./auth";
+import { useCountdown } from "./countdown";
 
 type SeriesFilter = "ongoing" | "upcoming" | "joined" | "past";
 type SeriesState = "ongoing" | "upcoming" | "past";
@@ -76,28 +76,6 @@ function getSeriesState(series: Pick<SeriesSummary, "starts_at" | "ends_at">): S
   if (starts > now) return "upcoming";
   if (ends !== null && ends <= now) return "past";
   return "ongoing";
-}
-
-function formatCountdown(
-  label: "Opens" | "Ends",
-  value?: string | null,
-  options: { missing?: string; past?: string } = {},
-) {
-  if (!value) return options.missing ?? "Open-ended";
-  const target = new Date(value).getTime();
-  const delta = target - Date.now();
-  if (!Number.isFinite(target)) return options.missing ?? "Open-ended";
-  if (delta <= 0) return options.past ?? `${label} now`;
-
-  const totalMinutes = Math.ceil(delta / 60000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  const parts: string[] = [];
-  if (days) parts.push(`${days}d`);
-  if (hours || days) parts.push(`${hours}h`);
-  parts.push(`${minutes}m`);
-  return `${label} in ${parts.join(" ")}`;
 }
 
 function sanitizeCaller(value: unknown): string | null {
@@ -362,13 +340,18 @@ function SeriesOverviewPage() {
     },
   });
 
+  const onOpenCountdownExpire = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["series-overview", sid] });
+    void queryClient.invalidateQueries({ queryKey: ["series"] });
+  }, [queryClient, sid]);
+
   const overview = overviewQuery.data;
   const member = auth.isMemberOf(sid);
   const specifications = overview ? getSpecificationEntries(overview.metadata) : [];
   const hostUrl = overview?.host.url?.trim();
   const hostLogoUrl = overview?.host.logo_url?.trim();
   const state = overview ? getSeriesState(overview) : "ongoing";
-  const openCountdown = overview && state === "upcoming" ? formatCountdown("Opens", overview.starts_at) : null;
+  const openCountdown = useCountdown(overview?.starts_at, "Opens", { onExpire: onOpenCountdownExpire });
 
   return (
     <Shell>
@@ -395,7 +378,7 @@ function SeriesOverviewPage() {
               </div>
             </div>
             <div className="overview-actions">
-              {openCountdown ? <span className="countdown-pill overview-countdown">{openCountdown}</span> : null}
+              {openCountdown ? <span className="countdown-pill overview-countdown">{openCountdown.label}</span> : null}
               {state === "past" ? (
                 <button className="ghost-button" disabled>Reminisce</button>
               ) : state === "upcoming" ? (
@@ -706,7 +689,7 @@ function SeriesArenaPage() {
   const rankLabel = series?.arena_stats.rank ? `#${series.arena_stats.rank}` : "—";
   const activePlayers = series?.arena_stats.active_players ?? 0;
   const activePlayersLabel = activePlayers === 1 ? "1 active player" : activePlayers ? `${activePlayers} active players` : "No active players";
-  const arenaCountdown = series ? formatCountdown("Ends", series.ends_at, { missing: "Open-ended", past: "Series ended" }) : null;
+  const arenaCountdown = useCountdown(series?.ends_at, "Ends");
   const isUpcomingBlocked = seriesQuery.error instanceof ApiError && seriesQuery.error.status === 403;
 
   if (auth.status === "anonymous") {
@@ -724,7 +707,7 @@ function SeriesArenaPage() {
           <Link to={`/series/${sid}/scoreboard`}>Scoreboard</Link>
         </nav>
         <div className="arena-session-box">
-          {arenaCountdown ? <span className="countdown-pill arena-countdown">{arenaCountdown}</span> : null}
+          {arenaCountdown ? <span className="countdown-pill arena-countdown">{arenaCountdown.label}</span> : null}
           <button className="arena-help-button" type="button" aria-label="Arena help" title="Arena help">
             <HelpCircle size={18} />
           </button>
@@ -1015,9 +998,6 @@ function SvgBase({ children }: { children: React.ReactNode }) {
   return <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">{children}</svg>;
 }
 
-function ArenaFlagIcon() {
-  return <SvgBase><path d="M8 25V6h2v3h12l-2 4 2 4H10v8H8Z" /></SvgBase>;
-}
 function WebGlyph() {
   return <SvgBase><rect x="6" y="8" width="20" height="16" rx="3" /><path d="M6 13h20M11 18h5M11 22h10" /></SvgBase>;
 }
