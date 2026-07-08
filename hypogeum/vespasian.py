@@ -235,7 +235,7 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
                 host VARCHAR(255) NOT NULL,
                 port INTEGER NOT NULL,
                 type VARCHAR(50) NOT NULL CHECK (type IN ({types})) DEFAULT 'private',
-                status VARCHAR(20) NOT NULL CHECK (status IN ({status})),
+                status VARCHAR(20) NOT NULL CHECK (status IN ({status})) DEFAULT 'starting',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (sid, cid, pid)
