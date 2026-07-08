@@ -12,4 +12,9 @@ REDIS_CLIENT = redis_connect()
 USER_STATUS = ['active', 'verified', 'suspended', 'banned']
 DIFFICULTY_LEVELS = ['Sanity Check', 'Easy', 'Medium', 'Hard']
 CATEGORIES = ['Warmup', 'Web', 'Crypto', 'Forensics', 'Pwn', 'Misc']
-INSTANCE_STATES = ['starting', 'running', 'stopping', 'stopped', 'exited', 'failed', 'expired']
+# NOTE: Know what you are doing. Intermediate states must always end with "ing"
+INSTANCE_STATES = [
+    'starting', 'started', 'pausing', 'paused', 'stopping', 'stopped', 'restarting', 'resetting',
+    'failed'
+]
+INSTANCES_TYPES = ['private', 'shared']
