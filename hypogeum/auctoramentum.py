@@ -88,6 +88,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         solves_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
         user_table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
+        instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
 
         series_query = sql.SQL(
             "SELECT sid, title, description, starts_at, ends_at, image "
@@ -95,30 +96,32 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
         ).format(series_table=series_table)
 
         challenges_query = sql.SQL("""
-            SELECT c.cid, c.title, c.description, c.points, c.category, c.difficulty, c.prerequisite,
-                    c.requires_instance, c.file_url, c.author,
-            COALESCE(
-                (
-                SELECT json_agg(
-                    json_build_object(
-                        'pid', u.pid,
-                        'display_name', u.display_name,
-                        'avatar', u.avatar,
-                        'solved_at', limited_solves.solved_at
-                    )
-                )
-                FROM (SELECT pid, solved_at
-                    FROM {s_table} WHERE cid = c.cid AND sid = %s
-                    ORDER BY solved_at ASC LIMIT %s OFFSET %s
-                ) AS limited_solves
-                LEFT JOIN {u_table} u ON limited_solves.pid = u.pid
-            ), '[]') AS solvers
-            FROM {c_table} c WHERE c.sid = %s
+            SELECT c.cid, c.title, c.description, c.points, c.category, c.difficulty,
+                c.prerequisite, c.requires_instance, c.file_url, c.author,
+                i.host, i.port, i.type, i.status, i.updated_at, %s AS lease,
+                COALESCE((
+                    SELECT json_agg(
+                        json_build_object(
+                            'pid', u.pid,
+                            'display_name', u.display_name,
+                            'avatar', u.avatar,
+                            'solved_at', limited_solves.solved_at
+                        )
+                    ) FROM (
+                        SELECT pid, solved_at FROM {s_table} WHERE cid = c.cid AND sid = %s
+                        ORDER BY solved_at ASC LIMIT %s OFFSET %s
+                    ) AS limited_solves
+                    LEFT JOIN {u_table} u ON limited_solves.pid = u.pid
+                ), '[]') AS solvers
+            FROM {c_table} c
+            LEFT JOIN {i_table} i ON c.cid = i.cid AND c.requires_instance = TRUE
+            WHERE c.sid = %s
             ORDER BY c.points DESC, c.cid ASC
         """).format(
             c_table=challenges_table,
             s_table=solves_table,
-            u_table=user_table
+            u_table=user_table,
+            i_table=instances_table
         )
 
         arena_stats_query = sql.SQL("""
@@ -166,7 +169,8 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
                 if not _series_has_started(series_data.get('starts_at')):
                     return {}, False, "Series has not started yet.", 403
 
-                cursor.execute(challenges_query, (sid, limit, offset, sid))
+                instance_lease = env('INSTANCE_LEASE', '1800') # In seconds
+                cursor.execute(challenges_query, (instance_lease, sid, limit, offset, sid))
                 challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 challenges_rows = cursor.fetchall()
 
