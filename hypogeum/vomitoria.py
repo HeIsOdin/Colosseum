@@ -1,7 +1,7 @@
 from . import login_manager, REDIS_CLIENT
 from flask import Blueprint, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user, UserMixin
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import env, db_connect, as_uuid
@@ -162,37 +162,25 @@ def locked_challenge_check(f):
             solves_table = env("POSTGRESQL_SOLVES_TABLE")[0]
 
             series_query = sql.SQL("""
-                SELECT starts_at, ends_at,
-                FROM {series}
-                WHERE sid = %s
-                LIMIT 1
+                SELECT starts_at, ends_at FROM {series} WHERE sid = %s
             """).format(
                 series=sql.Identifier(series_table),
             )
 
             membership_query = sql.SQL("""
-                SELECT 1
-                FROM {memberships}
-                WHERE sid = %s AND pid = %s
-                LIMIT 1
+                SELECT * FROM {memberships} WHERE sid = %s AND pid = %s
             """).format(
                 memberships=sql.Identifier(memberships_table),
             )
 
             challenge_query = sql.SQL("""
-                SELECT prerequisite
-                FROM {challenges}
-                WHERE sid = %s AND cid = %s
-                LIMIT 1
+                SELECT prerequisite FROM {challenges} WHERE sid = %s AND cid = %s
             """).format(
                 challenges=sql.Identifier(challenges_table),
             )
 
             prerequisite_solve_query = sql.SQL("""
-                SELECT 1
-                FROM {solves}
-                WHERE sid = %s AND cid = %s AND pid = %s
-                LIMIT 1
+                SELECT solved_at FROM {solves} WHERE sid = %s AND cid = %s AND pid = %s
             """).format(
                 solves=sql.Identifier(solves_table),
             )
@@ -209,7 +197,7 @@ def locked_challenge_check(f):
                     
                     series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                     series_data = dict(zip(series_columns, series_row))
-                    current_date = datetime.now()
+                    current_date = datetime.now(timezone.utc)
                     if series_data.get('starts_at') is None or series_data['starts_at'] > current_date:
                         return jsonify({
                             "success": False,
