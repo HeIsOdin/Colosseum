@@ -9,9 +9,55 @@ import asyncio
 import logging
 import psycopg2.sql as sql
 
-choragium_bp = Blueprint('choragium', __name__, url_prefix='/series/<int:sid>/challenges')
+choragium_bp = Blueprint('choragium', __name__, url_prefix='/series/<int:sid>')
 
 # --- Routes and their corresponding private functions ---
+
+def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
+    """
+    Retrieve all instances for a given series, challenge, and player.
+    This function fetches the instance details from the database.
+
+    Args:
+        - sid (int) : The ID of the series.
+        - pid (uuid.UUID) : The UUID of the player.
+    Returns:
+        list: A list of dictionaries containing instance details.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
+        query = sql.SQL("""
+            SELECT sid, cid, host, port, type, status, updated_at
+            FROM {instances_table}
+            WHERE sid = %s AND pid = %s AND type = 'private' AND status is 'started'
+        """).format(instances_table=instances_table)
+
+        with db_connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (sid, pid))
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                rows = cursor.fetchall()
+                return [dict(zip(columns, row)) for row in rows]
+    except Exception as e:
+        logger.exception(f"Error retrieving instances for Series ID {sid} and Player ID {pid}: {e}")
+        return []
+
+@choragium_bp.get('/instances')
+@login_required
+def get_all_private_instances(sid: int):
+    """
+    Endpoint to retrieve all private instances for the current user in a given series.
+    This route is protected and requires the user to be logged in.
+
+    Args:
+        - sid (int) : The ID of the series.
+    Returns:
+        JSON response containing a list of instances or an error message.
+    """
+    pid = as_uuid(current_user.id)
+    instances = _get_all_private_instances(sid, pid)
+    return jsonify({"success": True, "instances": instances}), 200
 
 def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin: bool = False
                     ) -> tuple[bool, str, int]:
@@ -103,7 +149,7 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
         logger.exception(f"Error controlling challenge instance for Series ID {sid} and Challenge ID {cid}: {e}")
         return False, "Internal server error", 500
 
-@choragium_bp.patch('/<int:cid>')
+@choragium_bp.patch('/challenges/<int:cid>')
 @login_required
 @locked_challenge_check
 def control_challenge_instance(sid: int, cid: int):  

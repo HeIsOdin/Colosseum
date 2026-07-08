@@ -118,7 +118,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
                             'solved_at', limited_solves.solved_at
                         )
                     ) FROM (
-                        SELECT pid, solved_at FROM {s_table} WHERE cid = c.cid AND sid = %s
+                        SELECT pid, solved_at FROM {s_table} WHERE cid = c.cid AND sid = c.sid
                         ORDER BY solved_at ASC LIMIT %s OFFSET %s
                     ) AS limited_solves
                     LEFT JOIN {u_table} u ON limited_solves.pid = u.pid
@@ -188,7 +188,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
                     return {}, False, "Series has not started yet.", 403
 
                 lease = int(env('INSTANCE_LEASE', '1800')[0]) # In seconds
-                cursor.execute(challenges_query, (lease, sid, limit, offset, pid, pid, sid))
+                cursor.execute(challenges_query, (lease, limit, offset, pid, pid, sid))
                 challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 challenges_rows = cursor.fetchall()
 
