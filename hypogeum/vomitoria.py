@@ -402,7 +402,7 @@ def login():
     caller = request.remote_addr or "/"
     login_user(user, remember=True, duration=timedelta(days=1))
 
-    return jsonify({"success": True, "message": message, **details, "redirect": caller}), status_code
+    return jsonify({"success": True, "message": message, **details, "caller": caller}), status_code
 
 @vomitoria_bp.delete('/')
 @login_required
