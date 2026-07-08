@@ -685,7 +685,7 @@ function SeriesArenaPage() {
     return (series?.challenges ?? [])
       .map((challenge, index) => ({ challenge, index, state: getChallengeState(challenge, solvedIds) }))
       .filter((entry) => !activeCategory || entry.challenge.category === activeCategory)
-      .sort((a, b) => stateOrder[a.state] - stateOrder[b.state] || a.index - b.index)
+      .sort((a, b) => stateOrder[a.state] - stateOrder[b.state] || a.challenge.cid - b.challenge.cid)
       .map((entry) => entry.challenge);
   }, [activeCategory, series?.challenges, solvedIds]);
 
@@ -807,7 +807,7 @@ function SeriesArenaPage() {
 
               {visibleChallenges.length > 0 ? (
                 <div className="arena-challenge-list">
-                  {visibleChallenges.sort((a, b) => a.cid - b.cid).map((challenge) => {
+                  {visibleChallenges.map((challenge) => {
                     const state = getChallengeState(challenge, solvedIds);
                     return (
                       <button

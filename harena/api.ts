@@ -98,6 +98,25 @@ export const ArenaStatsSchema = z.object({
 
 export type ArenaStats = z.infer<typeof ArenaStatsSchema>;
 
+const InstanceSchema = z.object({
+  host: z.string().nullable().optional(),
+  port: z.number().nullable().optional(),
+  type: z.enum(["private", "shared"]).nullable().optional(),
+  status: z.enum([
+    "starting",
+    "started",
+    "pausing",
+    "paused",
+    "stopping",
+    "stopped",
+    "restarting",
+    "resetting",
+    "failed",
+  ]).nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+  lease: z.coerce.number().nullable().optional(),
+});
+
 export const ChallengeSchema = z.object({
   cid: z.number(),
   title: z.string(),
@@ -110,6 +129,7 @@ export const ChallengeSchema = z.object({
   requires_instance: z.boolean().default(false),
   file_url: z.string().nullable().optional(),
   solvers: z.array(SolverSchema).default([]),
+  instance: InstanceSchema.nullable().optional(),
 });
 
 export type Challenge = z.infer<typeof ChallengeSchema>;
@@ -241,7 +261,7 @@ export const api = {
     });
   },
 
-  async controlInstance(sid: number, cid: number, action: "start" | "stop" | "restart") {
+  async controlInstance(sid: number, cid: number, action: "start" | "stop" | "restart" | "pause" | "reset"): Promise<{ success: boolean; message: string }> {
     return request(`/series/${sid}/challenges/${cid}`, {
       method: "PATCH",
       body: JSON.stringify({ action }),
