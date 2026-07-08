@@ -98,24 +98,41 @@ export const ArenaStatsSchema = z.object({
 
 export type ArenaStats = z.infer<typeof ArenaStatsSchema>;
 
-const InstanceSchema = z.object({
+export const InstanceStatusSchema = z.enum([
+  "starting",
+  "started",
+  "pausing",
+  "paused",
+  "stopping",
+  "stopped",
+  "restarting",
+  "resetting",
+  "failed",
+]);
+
+export type InstanceStatus = z.infer<typeof InstanceStatusSchema>;
+
+export const InstanceTypeSchema = z.enum(["private", "shared"]);
+export type InstanceType = z.infer<typeof InstanceTypeSchema>;
+
+export const InstanceSchema = z.object({
   host: z.string().nullable().optional(),
-  port: z.number().nullable().optional(),
-  type: z.enum(["private", "shared"]).nullable().optional(),
-  status: z.enum([
-    "starting",
-    "started",
-    "pausing",
-    "paused",
-    "stopping",
-    "stopped",
-    "restarting",
-    "resetting",
-    "failed",
-  ]).nullable().optional(),
+  port: z.coerce.number().nullable().optional(),
+  type: InstanceTypeSchema.nullable().optional(),
+  status: InstanceStatusSchema.nullable().optional(),
   updated_at: z.string().nullable().optional(),
   lease: z.coerce.number().nullable().optional(),
 });
+
+export type Instance = z.infer<typeof InstanceSchema>;
+
+export const RunningInstanceSchema = InstanceSchema.extend({
+  sid: z.number(),
+  cid: z.number(),
+});
+
+export type RunningInstance = z.infer<typeof RunningInstanceSchema>;
+export type InstanceAction = "start" | "pause" | "stop" | "restart" | "reset";
 
 export const ChallengeSchema = z.object({
   cid: z.number(),
@@ -261,11 +278,16 @@ export const api = {
     });
   },
 
-  async controlInstance(sid: number, cid: number, action: "start" | "stop" | "restart" | "pause" | "reset"): Promise<{ success: boolean; message: string }> {
+  async controlInstance(sid: number, cid: number, action: InstanceAction): Promise<{ success: boolean; message: string }> {
     return request(`/series/${sid}/challenges/${cid}`, {
       method: "PATCH",
       body: JSON.stringify({ action }),
     });
+  },
+
+  async listInstances(sid: number): Promise<RunningInstance[]> {
+    const payload = await request<{ instances: unknown[] }>(`/series/${sid}/instances`);
+    return z.array(RunningInstanceSchema).parse(payload.instances ?? []);
   },
 
   async getPlayer(pid: string): Promise<Player> {
