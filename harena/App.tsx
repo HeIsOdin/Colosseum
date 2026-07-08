@@ -157,7 +157,7 @@ function getFlagPlaceholder(challenge: Challenge, challenges: Challenge[] | unde
   if (solved) return "Challenge solved";
   if (locked && challenge.prerequisite) {
     const prerequisiteTitle = resolveChallengeTitle(challenges, challenge.prerequisite);
-    return `Solve ${prerequisiteTitle} first`;
+    return `Solve '${prerequisiteTitle}' first`;
   }
   return "Submit the flag and press enter";
 }
@@ -807,7 +807,7 @@ function SeriesArenaPage() {
 
               {visibleChallenges.length > 0 ? (
                 <div className="arena-challenge-list">
-                  {visibleChallenges.map((challenge) => {
+                  {visibleChallenges.sort((a, b) => a.cid - b.cid).map((challenge) => {
                     const state = getChallengeState(challenge, solvedIds);
                     return (
                       <button

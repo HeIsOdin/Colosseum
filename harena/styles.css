@@ -41,7 +41,7 @@ a { color: inherit; text-decoration: none; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 
-.page-shell { min-height: 100vh; }
+.page-shell { max-height: 100vh; }
 
 .app-shell {
   width: min(1170px, calc(100% - 24px));
@@ -663,7 +663,7 @@ button { cursor: pointer; }
 }
 .arena-list-header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
 .arena-list-header > span { color: #8fa2be; font-weight: 600; }
-.arena-challenge-list { display: grid; gap: 8px; }
+.arena-challenge-list { display: grid; gap: 8px; max-height: calc(100vh - 330px); overflow-y: auto; padding-right: 4px; }
 .arena-challenge-row {
   width: 100%;
   min-height: 66px;
