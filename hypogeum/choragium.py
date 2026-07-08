@@ -30,7 +30,8 @@ def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
         query = sql.SQL("""
             SELECT sid, cid, host, port, type, status, updated_at
             FROM {instances_table}
-            WHERE sid = %s AND pid = %s AND type = 'private' AND status is 'started'
+            WHERE sid = %s AND pid = %s AND type = 'private'
+            AND status IN ('starting', 'started', 'pausing', 'paused', 'restarting', 'resetting')
         """).format(instances_table=instances_table)
 
         with db_connect() as conn:
@@ -83,7 +84,12 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
         query = sql.SQL("""
             SELECT c.requires_instance, i.status, i.type FROM {challenges_table} c
-            LEFT JOIN {instances_table} i ON c.sid = i.sid AND c.cid = i.cid AND i.pid = %s
+            LEFT JOIN LATERAL (
+                SELECT i.sid, i.cid, i.pid, i.type, i.status FROM {instances_table} i
+                WHERE i.sid = c.sid AND i.cid = c.cid AND (i.pid = %s OR i.type = 'shared')
+                ORDER BY CASE WHEN i.pid = %s THEN 0 ELSE 1 END
+                LIMIT 1
+            ) i ON c.requires_instance = TRUE
             WHERE c.sid = %s AND c.cid = %s
         """).format(instances_table=instances_table, challenges_table=challenges_table)
 
@@ -190,7 +196,9 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
                 current_status = res[0]
                 if current_status is None:
                     raise Exception("Instance status is None, cannot perform mock action.")
+                
                 columns_and_values: dict[str, str] = {}
+                bypass_trigger = 'false'
                 if current_status == "starting":
                     columns_and_values["status"] = "started"
                     columns_and_values["host"] = "localhost"  # Mock host
@@ -205,9 +213,11 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
                     columns_and_values["port"] = "8080"  # Mock port
                 elif current_status == "resetting":
                     # NOTE: Resetting the instance should not stop the instance
-                    pass
+                    columns_and_values["status"] = "started"
+                    bypass_trigger = 'true'
                 else: raise Exception(f"Unexpected intermediate status: {current_status}")
                 query = sql.SQL("""
+                    SET LOCAL session.bypass_trigger = %s;
                     UPDATE {instances_table} SET {columns_and_values}
                     WHERE sid = %s AND cid = %s AND pid = %s
                 """).format(
@@ -217,7 +227,7 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
                         for col in columns_and_values.keys()
                     )
                 )
-                cursor.execute(query, (*columns_and_values.values(), sid, cid, pid))
+                cursor.execute(query, [bypass_trigger, *columns_and_values.values(), sid, cid, pid])
     except Exception as e:
         logger.exception(f"Error in mock service for {sid}:{cid}:{pid}: {e}")
 
