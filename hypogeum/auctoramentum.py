@@ -132,6 +132,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
                 )
                 ORDER BY CASE WHEN i.pid = %s THEN 0 ELSE 1 END, i.updated_at DESC
                 LIMIT 1
+            ) AS i ON TRUE
             WHERE c.sid = %s
             ORDER BY c.points DESC, c.cid ASC
         """).format(
