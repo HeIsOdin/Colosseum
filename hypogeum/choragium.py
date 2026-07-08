@@ -95,7 +95,7 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
 
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(query, (pid, sid, cid))
+                cursor.execute(query, (pid, pid, sid, cid))
                 res = cursor.fetchone()
                 if not res:
                     return False, f"{sid}:{cid} not found", 404
