@@ -1,4 +1,6 @@
-from hypogeum import DIFFICULTY_LEVELS, CATEGORIES, USER_STATUS, REDIS_CLIENT, INSTANCE_STATES
+from . import (
+    DIFFICULTY_LEVELS, CATEGORIES, USER_STATUS, REDIS_CLIENT, INSTANCE_STATES, INSTANCES_TYPES
+)
 from dotenv import load_dotenv
 from psycopg2 import sql
 from hypogeum.armamentarium import env, db_connect
@@ -217,6 +219,9 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
     series_table = env('POSTGRESQL_SERIES_TABLE')[0]
     challenges_table = env('POSTGRESQL_CHALLENGES_TABLE')[0]
     player_table = env('POSTGRESQL_USER_TABLE')[0]
+    types = sql.SQL(', ').join(
+        sql.Literal(instance_type) for instance_type in INSTANCES_TYPES
+    )
     status = sql.SQL(', ').join(
         sql.Literal(state) for state in INSTANCE_STATES
     )
@@ -224,22 +229,23 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                iid UUID PRIMARY KEY,
                 sid INTEGER REFERENCES {}(sid) ON DELETE CASCADE,
                 cid INTEGER REFERENCES {}(cid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
                 host VARCHAR(255) NOT NULL,
                 port INTEGER NOT NULL,
+                type VARCHAR(50) NOT NULL CHECK (type IN ({types})),
                 status VARCHAR(20) NOT NULL CHECK (status IN ({status})),
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (sid, cid, pid)
+                PRIMARY KEY (sid, cid, pid)
             );
         """).format(
             sql.Identifier(table_name),
             sql.Identifier(series_table),
             sql.Identifier(challenges_table),
             sql.Identifier(player_table),
+            types=types,
             status=status
         )
     )
@@ -259,6 +265,9 @@ def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
                 CREATE OR REPLACE FUNCTION {function_name}()
                 RETURNS TRIGGER AS $$
                 BEGIN
+                    IF current_setting('session.bypass_trigger', true) = 'true' THEN
+                        RETURN NEW;
+                    END IF;
                     NEW.updated_at = CURRENT_TIMESTAMP;
                     RETURN NEW;
                 END;
