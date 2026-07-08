@@ -71,7 +71,10 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
                 else: raise Exception(f"Unexpected instance status: {status}")
 
                 intermediate_status: str | None = None
-                if action == "pause":
+                if action == "start":
+                    if status == "started": raise ValueError("Instance is already started.")
+                    intermediate_status = "starting"
+                elif action == "pause":
                     if status == "paused": raise ValueError("Instance is already paused.")
                     intermediate_status = "pausing"
                 elif action == "stop":
