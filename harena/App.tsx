@@ -148,6 +148,20 @@ function getChallengeState(challenge: Challenge, solvedIds: Set<number>): Challe
   return "available";
 }
 
+function resolveChallengeTitle(challenges: Challenge[] | undefined, cid?: number | null) {
+  if (cid === null || cid === undefined) return null;
+  return challenges?.find((challenge) => challenge.cid === cid)?.title ?? `challenge ${cid}`;
+}
+
+function getFlagPlaceholder(challenge: Challenge, challenges: Challenge[] | undefined, locked: boolean, solved: boolean) {
+  if (solved) return "Challenge solved";
+  if (locked && challenge.prerequisite) {
+    const prerequisiteTitle = resolveChallengeTitle(challenges, challenge.prerequisite);
+    return `Solve ${prerequisiteTitle} first`;
+  }
+  return "Submit the flag and press enter";
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -824,6 +838,7 @@ function SeriesArenaPage() {
 
             <ChallengeDetailsPanel
               sid={sid}
+              challenges={series.challenges}
               challenge={selectedChallenge}
               noChallenges={totalChallenges === 0}
               allSolved={allSolved}
@@ -843,6 +858,7 @@ function SeriesArenaPage() {
 
 function ChallengeDetailsPanel({
   sid,
+  challenges,
   challenge,
   noChallenges,
   allSolved,
@@ -851,6 +867,7 @@ function ChallengeDetailsPanel({
   onSolved,
 }: {
   sid: number;
+  challenges: Challenge[];
   challenge: Challenge | null;
   noChallenges: boolean;
   allSolved: boolean;
@@ -913,6 +930,7 @@ function ChallengeDetailsPanel({
   }
 
   const flagDisabled = locked || solved || submitMutation.isPending || !flag.trim();
+  const flagPlaceholder = getFlagPlaceholder(challenge, challenges, locked, solved);
 
   return (
     <aside className="arena-details-panel">
@@ -924,7 +942,8 @@ function ChallengeDetailsPanel({
           <input
             value={flag}
             onChange={(event) => setFlag(event.target.value)}
-            placeholder={locked ? `Solve challenge ${challenge.prerequisite} first` : "Submit the flag and press enter"}
+            placeholder={flagPlaceholder}
+            title={flagPlaceholder}
             disabled={locked || solved}
           />
           <button className="arena-flag-submit" type="submit" disabled={flagDisabled} aria-label="Submit flag">
