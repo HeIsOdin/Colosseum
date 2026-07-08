@@ -8,6 +8,7 @@ from hypogeum.auctoramentum import auctoramentum_bp
 from hypogeum.gladiator import gladiator_bp
 from hypogeum.sanitarium import sanitarium_bp
 from hypogeum.pugna import pugna_bp
+from hypogeum.choragium import choragium_bp
 
 def configure_app(app: Flask) -> None:
     app.config['SECRET_KEY'] = env('COLOSSEUM_SECRET_KEY')[0]
@@ -33,6 +34,9 @@ def register_routes(app: Flask) -> None:
     url_prefix = f"{API_ROOT}/{pugna_bp.url_prefix}" if pugna_bp.url_prefix else API_ROOT
     app.register_blueprint(pugna_bp, url_prefix=url_prefix)
     url_prefix = f"{API_ROOT}/{sanitarium_bp.url_prefix}" if sanitarium_bp.url_prefix else API_ROOT
+    app.register_blueprint(sanitarium_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{choragium_bp.url_prefix}" if choragium_bp.url_prefix else API_ROOT
+    app.register_blueprint(choragium_bp, url_prefix=url_prefix)
 
 
 def create_app() -> Flask:
