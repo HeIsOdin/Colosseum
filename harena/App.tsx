@@ -7,22 +7,17 @@ import {
   ArrowRight,
   CalendarDays,
   CheckCircle2,
-  Download,
-  ExternalLink,
   Eye,
   EyeOff,
+  ExternalLink,
   Globe2,
   HelpCircle,
   Loader2,
   Lock,
   LogOut,
-  Play,
   Plus,
-  Radio,
-  RotateCcw,
   Search,
   Shield,
-  Square,
   UserRound,
 } from "lucide-react";
 import clsx from "clsx";
@@ -35,6 +30,7 @@ import {
 } from "./api";
 import { useAuth } from "./auth";
 import { useCountdown } from "./countdown";
+import { InstanceDeck } from "./InstanceDeck";
 
 type SeriesFilter = "ongoing" | "upcoming" | "joined" | "past";
 type SeriesState = "ongoing" | "upcoming" | "past";
@@ -899,12 +895,6 @@ function ChallengeDetailsPanel({
     },
   });
 
-  const instanceMutation = useMutation({
-    mutationFn: (action: "start" | "stop" | "restart") => api.controlInstance(sid, challenge!.cid, action),
-    onSuccess: () => setMessage("Instance command accepted."),
-    onError: (err) => setError(errorMessage(err)),
-  });
-
   if (noChallenges) {
     return (
       <aside className="arena-details-panel empty">
@@ -955,23 +945,14 @@ function ChallengeDetailsPanel({
       {message ? <p className="form-success">{message}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
 
-      {challenge.file_url ? (
-        <a className="arena-download-panel" href={challenge.file_url} download>
-          <Download size={20} />
-          <span>Download challenge archive</span>
-        </a>
-      ) : null}
-
-      {challenge.requires_instance ? (
-        <div className="arena-instance-panel">
-          <h3><Radio size={18} /> Instance control</h3>
-          <div className="arena-instance-actions">
-            <button className="solid-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("start")}><Play size={15} /> Start</button>
-            <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("restart")}><RotateCcw size={15} /> Restart</button>
-            <button className="ghost-button compact" disabled={locked || instanceMutation.isPending} onClick={() => instanceMutation.mutate("stop")}><Square size={15} /> Stop</button>
-          </div>
-        </div>
-      ) : null}
+      <InstanceDeck
+        sid={sid}
+        challenge={challenge}
+        challenges={challenges}
+        locked={locked}
+        onMessage={setMessage}
+        onError={setError}
+      />
 
       <div className="arena-detail-metrics">
         <div>
@@ -997,9 +978,9 @@ function CategoryGlyph({ category }: { category: string }) {
   if (key.includes("crypto")) return <CryptoGlyph />;
   if (key.includes("forensic")) return <ForensicsGlyph />;
   if (key.includes("pwn") || key.includes("exploit")) return <PwnGlyph />;
-  if (key.includes("reverse") || key.includes("re")) return <ReverseGlyph />;
-  if (key.includes("warm") || key.includes("sanity")) return <WarmupGlyph />;
   if (key.includes("hardware") || key.includes("ics")) return <HardwareGlyph />;
+  if (key.includes("reverse") || key === "re") return <ReverseGlyph />;
+  if (key.includes("warm") || key.includes("sanity")) return <WarmupGlyph />;
   return <MiscGlyph />;
 }
 
