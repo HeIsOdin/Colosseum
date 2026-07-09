@@ -285,6 +285,16 @@ export const api = {
     });
   },
 
+  async getInstance(sid: number, cid: number): Promise<Instance | null> {
+    try {
+      const payload = await request<{ instance: unknown }>(`/series/${sid}/challenges/${cid}/instance`);
+      return InstanceSchema.parse(payload.instance);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+  },
+
   async listInstances(sid: number): Promise<RunningInstance[]> {
     const payload = await request<{ instances: unknown[] }>(`/series/${sid}/instances`);
     return z.array(RunningInstanceSchema).parse(payload.instances ?? []);
