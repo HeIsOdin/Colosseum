@@ -60,6 +60,58 @@ def get_all_private_instances(sid: int):
     instances = _get_all_private_instances(sid, pid)
     return jsonify({"success": True, "instances": instances}), 200
 
+def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
+    """
+    Retrieve a specific instance for a given series, challenge, and player.
+    This function fetches the instance details from the database.
+
+    Args:
+        - sid (int) : The ID of the series.
+        - cid (int) : The ID of the challenge.
+        - pid (uuid.UUID) : The UUID of the player.
+    Returns:
+        dict | None: A dictionary containing instance details or None if not found.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
+        query = sql.SQL("""
+            SELECT sid, cid, host, port, type, status, updated_at
+            FROM {instances_table}
+            WHERE sid = %s AND cid = %s AND pid = %s AND type = 'private'
+        """).format(instances_table=instances_table)
+
+        with db_connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (sid, cid, pid))
+                row = cursor.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    return dict(zip(columns, row))
+                return None
+    except Exception as e:
+        logger.exception(f"Error retrieving instance for Series ID {sid}, Challenge ID {cid}, Player ID {pid}: {e}")
+        return None
+
+@choragium_bp.get('/challenges/<int:cid>/instance')
+@login_required
+def get_instance(sid: int, cid: int):
+    """
+    Endpoint to retrieve a specific private instance for the current user in a given series and challenge.
+    This route is protected and requires the user to be logged in.
+
+    Args:
+        - sid (int) : The ID of the series.
+        - cid (int) : The ID of the challenge.
+    Returns:
+        JSON response containing instance details or an error message.
+    """
+    pid = as_uuid(current_user.id)
+    instance = _get_instance(sid, cid, pid)
+    if instance is None:
+        return jsonify({"success": False, "message": "Instance not found."}), 404
+    return jsonify({"success": True, "instance": instance}), 200
+
 def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin: bool = False
                     ) -> tuple[bool, str, int]:
     """
