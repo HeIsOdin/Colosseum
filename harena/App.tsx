@@ -953,21 +953,6 @@ function ChallengeDetailsPanel({
         onMessage={setMessage}
         onError={setError}
       />
-
-      <div className="arena-detail-metrics">
-        <div>
-          <strong>{challenge.points}</strong>
-          <span>Points</span>
-        </div>
-        <div>
-          <strong>{challenge.difficulty}</strong>
-          <span>Difficulty</span>
-        </div>
-        <div>
-          <strong>{challenge.solvers.length}</strong>
-          <span>Solves</span>
-        </div>
-      </div>
     </aside>
   );
 }

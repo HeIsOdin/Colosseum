@@ -735,6 +735,8 @@ button { cursor: pointer; }
   padding: 24px;
   background: rgba(18, 27, 43, 0.94);
   box-shadow: 0 16px 40px rgba(0,0,0,0.26);
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
 }
 .arena-detail-topline {
   display: flex;

@@ -151,8 +151,8 @@
   margin-top: 24px;
   border: 1px solid rgba(183, 192, 207, 0.12);
   border-radius: 20px;
-  padding: 22px 18px 20px;
-  background: linear-gradient(180deg, rgba(18, 39, 42, 0.92), rgba(8, 17, 20, 0.94));
+  padding: 15px 15px 15px;
+  background: linear-gradient(180deg, #0d1625 0%, #090f19 100%);
   box-shadow: 0 18px 38px rgba(0, 0, 0, 0.22);
 }
 
@@ -167,8 +167,9 @@
   margin: 0;
   max-width: 250px;
   overflow: hidden;
-  color: #f8fafc;
-  font-size: clamp(1.45rem, 4vw, 2.25rem);
+  color: var(--muted);
+  font-size: clamp(1rem, 1.75vw, 2rem);
+  font-weight: 600;
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -177,25 +178,12 @@
 .instance-player-heading p {
   margin: 8px 0 0;
   color: rgba(226, 232, 240, 0.68);
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.instance-status-chip {
-  flex: 0 0 auto;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  padding: 6px 10px;
-  color: rgba(248, 250, 252, 0.82);
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 0.72rem;
-  font-weight: 850;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .instance-progress {
-  margin-top: 26px;
+  margin-top: 13px;
 }
 
 .instance-progress-bar {
@@ -227,16 +215,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-}
-
-.instance-control-row-top {
-  margin-top: 22px;
-}
-
-.instance-control-row-bottom {
-  margin-top: 18px;
-  justify-content: space-between;
+  gap: 10px;
 }
 
 .instance-control-row button {

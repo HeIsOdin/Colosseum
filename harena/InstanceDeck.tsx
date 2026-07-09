@@ -36,11 +36,12 @@ function formatClock(totalSeconds: number | null | undefined) {
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
-function elapsedSecondsSince(value?: string | null, now = Date.now()) {
+function elapsedSecondsSince(value?: string | null, now = Date.now(), duration?: number | null) {
   if (!value) return null;
   const updatedAt = new Date(value).getTime();
   if (!Number.isFinite(updatedAt)) return null;
-  return Math.max(0, Math.floor((now - updatedAt) / 1000));
+  if (!duration || !Number.isFinite(duration) || duration <= 0) return Math.max(0, Math.floor((now - updatedAt) / 1000));
+  return Math.min(Math.max(0, Math.floor((now - updatedAt) / 1000)), duration);
 }
 
 function buildInstanceUrl(host?: string | null, port?: number | null) {
@@ -128,8 +129,8 @@ export function InstanceDeck({
   const redirectDisabled = !requiresInstance || !isWebChallenge || !instanceUrl;
   const downloadDisabled = !challenge.file_url;
 
-  const elapsed = elapsedSecondsSince(instance?.updated_at, now);
   const duration = instance?.lease ?? null;
+  const elapsed = elapsedSecondsSince(instance?.updated_at, now, duration);
   const progressPercent = useMemo(() => {
     if (!elapsed || !duration || duration <= 0) return 0;
     return Math.min(100, Math.max(0, (elapsed / duration) * 100));
@@ -167,7 +168,14 @@ export function InstanceDeck({
           <h3>{hostname}</h3>
           <p>{port}</p>
         </div>
-        {status ? <span className="instance-status-chip">{status}</span> : null}
+        <div className="instance-control-row instance-control-row-bottom">
+          <button type="button" aria-label="Download challenge file" disabled={downloadDisabled} onClick={downloadFile}>
+            <Download size={28} />
+          </button>
+          <button type="button" aria-label="Open web instance" disabled={redirectDisabled} onClick={openInstance}>
+            <ExternalLink size={28} />
+          </button>
+        </div>
       </div>
 
       <div className="instance-progress">
@@ -198,21 +206,12 @@ export function InstanceDeck({
         </button>
       </div>
 
-      <div className="instance-control-row instance-control-row-bottom">
-        <button type="button" aria-label="Download challenge file" disabled={downloadDisabled} onClick={downloadFile}>
-          <Download size={28} />
-        </button>
-        <button type="button" aria-label="Open web instance" disabled={redirectDisabled} onClick={openInstance}>
-          <ExternalLink size={28} />
-        </button>
-      </div>
-
-      {isShared ? (
+      {/* {isShared ? (
         <p className="instance-helper-note">This is a shared instance. Private lifecycle controls are disabled.</p>
       ) : null}
       {!requiresInstance ? (
         <p className="instance-helper-note">This challenge does not require an instance.</p>
-      ) : null}
+      ) : null} */}
 
       {cycleOpen ? (
         <div className="instance-modal-backdrop" role="presentation" onClick={() => setCycleOpen(false)}>
