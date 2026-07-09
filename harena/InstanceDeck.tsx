@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Download,
@@ -12,7 +12,14 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { api, type Challenge, type InstanceAction, type InstanceStatus } from "./api";
+import {
+  api,
+  type Challenge,
+  type Instance,
+  type InstanceAction,
+  type InstanceStatus,
+  type SeriesData,
+} from "./api";
 
 const INTERMEDIATE_STATES = new Set<InstanceStatus>([
   "starting",
@@ -21,6 +28,14 @@ const INTERMEDIATE_STATES = new Set<InstanceStatus>([
   "restarting",
   "resetting",
 ]);
+
+const OPTIMISTIC_STATUS_BY_ACTION: Record<InstanceAction, InstanceStatus> = {
+  start: "starting",
+  pause: "pausing",
+  stop: "stopping",
+  restart: "restarting",
+  reset: "resetting",
+};
 
 function formatClock(totalSeconds: number | null | undefined) {
   if (totalSeconds === null || totalSeconds === undefined || !Number.isFinite(totalSeconds)) return "—";
@@ -64,6 +79,15 @@ function getMainAction(status?: InstanceStatus | null): InstanceAction | null {
   return null;
 }
 
+function getInstancePollInterval(status: InstanceStatus | null | undefined, pending: boolean): number | false {
+  if (pending) return 2_500;
+  if (!status) return false;
+  if (INTERMEDIATE_STATES.has(status)) return 2_500;
+  if (status === "started") return 15_000;
+  if (status === "paused") return 30_000;
+  return false;
+}
+
 export function InstanceDeck({
   sid,
   challenge,
@@ -93,33 +117,96 @@ export function InstanceDeck({
   const isWebChallenge = challenge.category.toLowerCase().includes("web");
   const instanceUrl = buildInstanceUrl(instance?.host, instance?.port);
 
+  const patchSeriesInstance = useCallback(
+    (nextInstance: Instance | null) => {
+      queryClient.setQueryData<SeriesData | undefined>(["series", sid], (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          challenges: old.challenges.map((entry) => {
+            if (entry.cid !== challenge.cid) return entry;
+            return {
+              ...entry,
+              instance: nextInstance
+                ? {
+                    ...entry.instance,
+                    ...nextInstance,
+                    lease: nextInstance.lease ?? entry.instance?.lease,
+                  }
+                : null,
+            };
+          }),
+        };
+      });
+    },
+    [challenge.cid, queryClient, sid],
+  );
+
   useEffect(() => {
     if (!requiresInstance || !instance?.updated_at) return;
     const timeoutId = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timeoutId);
   }, [instance?.updated_at, requiresInstance]);
 
-  const runningInstancesQuery = useQuery({
-    queryKey: ["instances", sid],
-    queryFn: () => api.listInstances(sid),
-    enabled: cycleOpen,
-  });
-
   const instanceMutation = useMutation({
     mutationFn: (action: InstanceAction) => api.controlInstance(sid, challenge.cid, action),
+    onMutate: async (action) => {
+      await queryClient.cancelQueries({ queryKey: ["series", sid] });
+      const previousSeries = queryClient.getQueryData<SeriesData>(["series", sid]);
+      const existing = challenge.instance ?? {};
+      const optimisticStatus = OPTIMISTIC_STATUS_BY_ACTION[action];
+      const shouldPreserveLeaseTimestamp = action === "reset";
+
+      patchSeriesInstance({
+        ...existing,
+        type: existing.type ?? "private",
+        status: optimisticStatus,
+        updated_at: shouldPreserveLeaseTimestamp ? existing.updated_at : new Date().toISOString(),
+      });
+
+      return { previousSeries };
+    },
     onSuccess: async (response) => {
       onMessage(response.message || "Instance command accepted.");
       onError(null);
-      await queryClient.invalidateQueries({ queryKey: ["series", sid] });
+      await queryClient.invalidateQueries({ queryKey: ["instance", sid, challenge.cid] });
       await queryClient.invalidateQueries({ queryKey: ["instances", sid] });
     },
-    onError: (err) => {
+    onError: (err, _action, context) => {
+      if (context?.previousSeries) queryClient.setQueryData(["series", sid], context.previousSeries);
       onMessage(null);
       onError(err instanceof Error ? err.message : "Instance command failed.");
     },
   });
 
   const actionPending = instanceMutation.isPending;
+  const pollInterval = getInstancePollInterval(status, actionPending);
+  const shouldPollSelectedInstance = requiresInstance && !locked && !isShared && (hasInstance || actionPending) && pollInterval !== false;
+
+  const selectedInstanceQuery = useQuery({
+    queryKey: ["instance", sid, challenge.cid],
+    queryFn: () => api.getInstance(sid, challenge.cid),
+    enabled: shouldPollSelectedInstance,
+    refetchInterval: shouldPollSelectedInstance ? pollInterval : false,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!shouldPollSelectedInstance || selectedInstanceQuery.data === undefined) return;
+    if (selectedInstanceQuery.data === null && (actionPending || isPendingInstance)) return;
+    patchSeriesInstance(selectedInstanceQuery.data);
+  }, [actionPending, isPendingInstance, patchSeriesInstance, selectedInstanceQuery.data, shouldPollSelectedInstance]);
+
+  const runningInstancesQuery = useQuery({
+    queryKey: ["instances", sid],
+    queryFn: () => api.listInstances(sid),
+    enabled: cycleOpen,
+    refetchInterval: cycleOpen ? 10_000 : false,
+    refetchIntervalInBackground: false,
+  });
+
   const controlsBlocked = locked || !requiresInstance || isShared || actionPending || isPendingInstance || status === "failed";
   const mainAction = getMainAction(status);
   const mainDisabled = controlsBlocked || mainAction === null;
