@@ -150,6 +150,7 @@ export const ChallengeSchema = z.object({
 });
 
 export type Challenge = z.infer<typeof ChallengeSchema>;
+export type ChallengeState = "available" | "locked" | "solved";
 
 export const SeriesDataSchema = SeriesSummarySchema.extend({
   challenges: z.array(ChallengeSchema).default([]),

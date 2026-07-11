@@ -2,10 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AuthProvider } from "./auth";
-import App from "./App";
-import "./styles.css";
-import "./arena-refinements.css";
+import { AuthProvider } from "@/vomitoria";
+import App from "@/harena";
+import "@/styles.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

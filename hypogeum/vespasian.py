@@ -279,7 +279,7 @@ def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
             sql.SQL("""
                 DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};
                 CREATE TRIGGER {trigger_name}
-                BEFORE UPDATE ON {table_name}
+                BEFORE INSERT OR UPDATE ON {table_name}
                 FOR EACH ROW EXECUTE FUNCTION {function_name}();
             """).format(
                 trigger_name=sql.Identifier(trigger_name),

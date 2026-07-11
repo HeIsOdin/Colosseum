@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { Loader2, Shield } from "lucide-react";
+import { ApiError, type SeriesSummary } from "@/api";
 
 export type CountdownLabel = "Opens" | "Ends";
 
@@ -11,8 +14,49 @@ type CountdownOptions = {
   onExpire?: () => void;
 };
 
+type SeriesState = "ongoing" | "upcoming" | "past";
+
 const MINUTE_MS = 60_000;
 const MIN_DELAY_MS = 250;
+
+export function formatDate(value?: string | null) {
+  if (!value) return "Open-ended";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+  }).format(new Date(value));
+}
+
+export function getSeriesState(series: Pick<SeriesSummary, "starts_at" | "ends_at">): SeriesState {
+  const now = Date.now();
+  const starts = new Date(series.starts_at).getTime();
+  const ends = series.ends_at ? new Date(series.ends_at).getTime() : null;
+
+  if (starts > now) return "upcoming";
+  if (ends !== null && ends <= now) return "past";
+  return "ongoing";
+}
+
+export function errorMessage(error: unknown) {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return "Something went wrong.";
+}
+
+export function LoadingCard({ label }: { label: string }) {
+  return <div className="notice-card"><Loader2 className="spin" size={18} /> {label}</div>;
+}
+
+export function ErrorCard({ message }: { message: string }) {
+  return <div className="notice-card error"><Shield size={18} /> {message}</div>;
+}
+
+export function currentRoute(location: ReturnType<typeof useLocation>) {
+  return `${location.pathname}${location.search}${location.hash}`;
+}
 
 function getTargetMs(value?: string | null): number | null {
   if (!value) return null;

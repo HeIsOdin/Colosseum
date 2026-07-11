@@ -14,12 +14,9 @@ import {
 } from "lucide-react";
 import {
   api,
-  type Challenge,
-  type Instance,
-  type InstanceAction,
-  type InstanceStatus,
-  type SeriesData,
-} from "./api";
+  type Challenge, type Instance, type InstanceAction, type InstanceStatus, type SeriesData,
+} from "@/api";
+import "./styles.css";
 
 const INTERMEDIATE_STATES = new Set<InstanceStatus>([
   "starting",
@@ -88,7 +85,7 @@ function getInstancePollInterval(status: InstanceStatus | null | undefined, pend
   return false;
 }
 
-export function InstanceDeck({
+export default function InstanceDeck({
   sid,
   challenge,
   challenges,
