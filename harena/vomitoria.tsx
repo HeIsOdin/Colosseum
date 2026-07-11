@@ -143,8 +143,7 @@ export function AuthPage() {
     setMessage(null);
     try {
       if (mode === "login") {
-        const result = await auth.login(email, password);
-        navigate(sanitizeCaller(result.caller) ?? returnTarget, { replace: true });
+        navigate(returnTarget, { replace: true });
       } else {
         if (password !== confirmPassword) {
           setError("Passwords do not match.");
