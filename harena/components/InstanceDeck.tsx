@@ -70,9 +70,18 @@ function getChallengeTitle(challenges: Challenge[], cid: number) {
   return challenges.find((challenge) => challenge.cid === cid)?.title ?? `Challenge ${cid}`;
 }
 
-function getMainAction(status?: InstanceStatus | null): InstanceAction | null {
-  if (!status || status === "paused" || status === "stopped") return "start";
-  if (status === "started") return "pause";
+function canPause(instance: Instance | null) {
+  return (
+    instance?.status === "started" &&
+    instance.created_at &&
+    instance.updated_at &&
+    new Date(instance.created_at).getTime() === new Date(instance.updated_at).getTime()
+  );
+}
+
+function getMainAction(instance: Instance | null): InstanceAction | null {
+  if (!instance?.status || instance.status === "paused" || instance.status === "stopped") return "start";
+  if (instance.status === "started" && canPause(instance)) return "pause";
   return null;
 }
 
@@ -151,7 +160,7 @@ export default function InstanceDeck({
     onMutate: async (action) => {
       await queryClient.cancelQueries({ queryKey: ["series", sid] });
       const previousSeries = queryClient.getQueryData<SeriesData>(["series", sid]);
-      const existing = challenge.instance ?? {};
+      const existing: Instance = challenge.instance ?? {};
       const optimisticStatus = OPTIMISTIC_STATUS_BY_ACTION[action];
       const shouldPreserveLeaseTimestamp = action === "reset";
 
@@ -205,7 +214,7 @@ export default function InstanceDeck({
   });
 
   const controlsBlocked = locked || !requiresInstance || isShared || actionPending || isPendingInstance || status === "failed";
-  const mainAction = getMainAction(status);
+  const mainAction = getMainAction(instance);
   const mainDisabled = controlsBlocked || mainAction === null;
   const restartDisabled = controlsBlocked || !hasInstance || status === "stopped";
   const stopDisabled = controlsBlocked || !hasInstance || status === "stopped";

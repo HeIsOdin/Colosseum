@@ -120,6 +120,7 @@ export const InstanceSchema = z.object({
   port: z.coerce.number().nullable().optional(),
   type: InstanceTypeSchema.nullable().optional(),
   status: InstanceStatusSchema.nullable().optional(),
+  created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),
   lease: z.coerce.number().nullable().optional(),
 });

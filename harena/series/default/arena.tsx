@@ -339,7 +339,7 @@ export function SeriesArenaPage() {
                       key={group.name}
                       type="button"
                       className={clsx("arena-category-button", activeCategory === group.name && "active")}
-                      onClick={() => setSelectedCategory(group.name)}
+                      onClick={() => { setSelectedCategory(group.name); setSelectedCid(null); }}
                     >
                       <span className="arena-category-icon"><CategoryGlyph category={group.name} /></span>
                       <span className="arena-category-copy">

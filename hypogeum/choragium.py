@@ -40,7 +40,7 @@ def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
     logger = logging.getLogger(__name__)
     try:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
-        lease = sql.Literal(int(env('INSTANCE_LEASE_DURATION', '1800')[0]))
+        lease = sql.Literal(int(env('INSTANCE_LEASE', '1800')[0]))
         query = sql.SQL("""
             SELECT sid, cid, host, port, type, status, updated_at, {} AS lease
             FROM {instances_table}
@@ -89,7 +89,7 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
     logger = logging.getLogger(__name__)
     try:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
-        lease = sql.Literal(int(env('INSTANCE_LEASE_DURATION', '1800')[0]))
+        lease = sql.Literal(int(env('INSTANCE_LEASE', '1800')[0]))
         query = sql.SQL("""
             SELECT sid, cid, host, port, type, status, created_at, updated_at, {} AS lease
             FROM {instances_table}
@@ -105,12 +105,11 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
                     res = dict(zip(columns, row))
                     if res['status'] == 'paused':
                         # NOTE: Read the docstring to understand why 'pauses' are weird
-                        updated_at: datatime = res['updated_at']
+                        updated_at: datetime = res['updated_at']
                         created_at: datetime = res['created_at']
                         now = datetime.now(timezone.utc)
-                        elapsed = (updated_at - created_at).total_seconds()
                         interim = (now - updated_at).total_seconds()
-                        res['updated_at'] = res['created_at'] + timedelta(seconds=interim)
+                        res['updated_at'] = created_at+ timedelta(seconds=interim)
 
                     return res
                 return None
@@ -327,7 +326,7 @@ async def main():
         SELECT sid, cid, pid FROM {instances_table}
         WHERE status = ANY(%s)
     """).format(instances_table=instances_table)
-    lease_duration = int(env('INSTANCE_LEASE_DURATION', '1800')[0])
+    lease_duration = int(env('INSTANCE_LEASE', '1800')[0])
     expiry_query = sql.SQL("""
         SET LOCAL session.bypass_trigger = 'true';
         UPDATE {instances_table} SET status = 'stopping'
