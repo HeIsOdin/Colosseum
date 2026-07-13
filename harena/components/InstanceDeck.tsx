@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Download,
@@ -14,28 +14,30 @@ import {
 } from "lucide-react";
 import {
   api,
-  type Challenge, type Instance, type InstanceAction, type InstanceStatus, type SeriesData,
+  type Challenge, type Instance, type InstanceAction, type InstanceStatus
 } from "@/api";
 import "./styles.css";
 
 const INTERMEDIATE_STATES = new Set<InstanceStatus>([
   "starting",
   "pausing",
+  "resuming",
   "stopping",
   "restarting",
   "resetting",
 ]);
 
-const OPTIMISTIC_STATUS_BY_ACTION: Record<InstanceAction, InstanceStatus> = {
-  start: "starting",
-  pause: "pausing",
-  stop: "stopping",
-  restart: "restarting",
-  reset: "resetting",
-};
+// const OPTIMISTIC_STATUS_BY_ACTION: Record<InstanceAction, InstanceStatus> = {
+//   start: "starting",
+//   pause: "pausing",
+//   stop: "stopping",
+//   restart: "restarting",
+//   reset: "resetting",
+// };
 
-function formatClock(totalSeconds: number | null | undefined) {
-  if (totalSeconds === null || totalSeconds === undefined || !Number.isFinite(totalSeconds)) return "—";
+function formatClock(status: InstanceStatus | null, totalSeconds: number | null | undefined) {
+  if (!status || status === "stopped") return "--:--";
+  if (totalSeconds === null || totalSeconds === undefined || !Number.isFinite(totalSeconds)) return "--:--";
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -70,18 +72,19 @@ function getChallengeTitle(challenges: Challenge[], cid: number) {
   return challenges.find((challenge) => challenge.cid === cid)?.title ?? `Challenge ${cid}`;
 }
 
-function canPause(instance: Instance | null) {
-  return (
+function canPause(instance: Instance | null): Boolean {
+  return Boolean(
     instance?.status === "started" &&
     instance.created_at &&
     instance.updated_at &&
-    new Date(instance.created_at).getTime() === new Date(instance.updated_at).getTime()
+    new Date(instance?.created_at).getTime() === new Date(instance?.updated_at).getTime()
   );
 }
 
 function getMainAction(instance: Instance | null): InstanceAction | null {
-  if (!instance?.status || instance.status === "paused" || instance.status === "stopped") return "start";
-  if (instance.status === "started" && canPause(instance)) return "pause";
+  if (!instance?.status || instance.status === "stopped") return "start";
+  if (instance.status === "paused") return "resume";
+  if (["started", "resumed"].includes(instance.status)) return "pause";
   return null;
 }
 
@@ -110,10 +113,10 @@ export default function InstanceDeck({
   onError: (message: string | null) => void;
 }) {
   const queryClient = useQueryClient();
+  const [instance, setInstance] = useState<Instance | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [cycleOpen, setCycleOpen] = useState(false);
 
-  const instance = challenge.instance ?? null;
   const status = instance?.status ?? null;
   const requiresInstance = challenge.requires_instance;
   const isShared = instance?.type === "shared";
@@ -123,31 +126,9 @@ export default function InstanceDeck({
   const isWebChallenge = challenge.category.toLowerCase().includes("web");
   const instanceUrl = buildInstanceUrl(instance?.host, instance?.port);
 
-  const patchSeriesInstance = useCallback(
-    (nextInstance: Instance | null) => {
-      queryClient.setQueryData<SeriesData | undefined>(["series", sid], (old) => {
-        if (!old) return old;
-
-        return {
-          ...old,
-          challenges: old.challenges.map((entry) => {
-            if (entry.cid !== challenge.cid) return entry;
-            return {
-              ...entry,
-              instance: nextInstance
-                ? {
-                    ...entry.instance,
-                    ...nextInstance,
-                    lease: nextInstance.lease ?? entry.instance?.lease,
-                  }
-                : null,
-            };
-          }),
-        };
-      });
-    },
-    [challenge.cid, queryClient, sid],
-  );
+  useEffect(() => {
+    setInstance(null);
+  }, [sid, challenge.cid]);
 
   useEffect(() => {
     if (!requiresInstance || !instance?.updated_at) return;
@@ -157,21 +138,9 @@ export default function InstanceDeck({
 
   const instanceMutation = useMutation({
     mutationFn: (action: InstanceAction) => api.controlInstance(sid, challenge.cid, action),
-    onMutate: async (action) => {
-      await queryClient.cancelQueries({ queryKey: ["series", sid] });
-      const previousSeries = queryClient.getQueryData<SeriesData>(["series", sid]);
-      const existing: Instance = challenge.instance ?? {};
-      const optimisticStatus = OPTIMISTIC_STATUS_BY_ACTION[action];
-      const shouldPreserveLeaseTimestamp = action === "reset";
-
-      patchSeriesInstance({
-        ...existing,
-        type: existing.type ?? "private",
-        status: optimisticStatus,
-        updated_at: shouldPreserveLeaseTimestamp ? existing.updated_at : new Date().toISOString(),
-      });
-
-      return { previousSeries };
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["instance", sid, challenge.cid] });
+      return { existingInstance: instance };
     },
     onSuccess: async (response) => {
       onMessage(response.message || "Instance command accepted.");
@@ -180,7 +149,7 @@ export default function InstanceDeck({
       await queryClient.invalidateQueries({ queryKey: ["instances", sid] });
     },
     onError: (err, _action, context) => {
-      if (context?.previousSeries) queryClient.setQueryData(["series", sid], context.previousSeries);
+      if (context?.existingInstance) setInstance(context?.existingInstance ?? null);
       onMessage(null);
       onError(err instanceof Error ? err.message : "Instance command failed.");
     },
@@ -188,22 +157,28 @@ export default function InstanceDeck({
 
   const actionPending = instanceMutation.isPending;
   const pollInterval = getInstancePollInterval(status, actionPending);
-  const shouldPollSelectedInstance = requiresInstance && !locked && !isShared && (hasInstance || actionPending) && pollInterval !== false;
+  const shouldPollSelectedInstance = requiresInstance && !locked && !isShared && pollInterval !== false;
+  const canControlLifecycle = requiresInstance && !locked && (instance === null || instance.type === "private");
 
   const selectedInstanceQuery = useQuery({
     queryKey: ["instance", sid, challenge.cid],
     queryFn: () => api.getInstance(sid, challenge.cid),
-    enabled: shouldPollSelectedInstance,
+    enabled: requiresInstance && !locked,
     refetchInterval: shouldPollSelectedInstance ? pollInterval : false,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     refetchIntervalInBackground: false,
     retry: false,
   });
 
   useEffect(() => {
-    if (!shouldPollSelectedInstance || selectedInstanceQuery.data === undefined) return;
-    if (selectedInstanceQuery.data === null && (actionPending || isPendingInstance)) return;
-    patchSeriesInstance(selectedInstanceQuery.data);
-  }, [actionPending, isPendingInstance, patchSeriesInstance, selectedInstanceQuery.data, shouldPollSelectedInstance]);
+    // if (!shouldPollSelectedInstance || selectedInstanceQuery.data === undefined) return;
+    // if (selectedInstanceQuery.data === null && (actionPending || isPendingInstance)) return;
+    if (selectedInstanceQuery.data !== undefined) {
+      setInstance(selectedInstanceQuery.data);
+    }
+  }, [selectedInstanceQuery.data]);
 
   const runningInstancesQuery = useQuery({
     queryKey: ["instances", sid],
@@ -213,17 +188,17 @@ export default function InstanceDeck({
     refetchIntervalInBackground: false,
   });
 
-  const controlsBlocked = locked || !requiresInstance || isShared || actionPending || isPendingInstance || status === "failed";
+  const controlsBlocked = !canControlLifecycle || actionPending || isPendingInstance || status === "failed";
   const mainAction = getMainAction(instance);
   const mainDisabled = controlsBlocked || mainAction === null;
   const restartDisabled = controlsBlocked || !hasInstance || status === "stopped";
   const stopDisabled = controlsBlocked || !hasInstance || status === "stopped";
   const resetDisabled = controlsBlocked || !hasInstance || status === "stopped";
-  const redirectDisabled = !requiresInstance || !isWebChallenge || !instanceUrl;
+  const redirectDisabled = !requiresInstance || !isWebChallenge || !instanceUrl || status !== "started" || isIntermediate;
   const downloadDisabled = !challenge.file_url;
 
   const duration = instance?.lease ?? null;
-  const elapsed = elapsedSecondsSince(instance?.updated_at, now, duration);
+  const elapsed = instance?.elapsed ?? elapsedSecondsSince(instance?.updated_at, now, duration);
   const progressPercent = useMemo(() => {
     if (!elapsed || !duration || duration <= 0) return 0;
     return Math.min(100, Math.max(0, (elapsed / duration) * 100));
@@ -276,8 +251,8 @@ export default function InstanceDeck({
           <span style={{ width: `${progressPercent}%` }} />
         </div>
         <div className="instance-progress-times">
-          <span>{formatClock(elapsed)}</span>
-          <span>{formatClock(duration)}</span>
+          <span>{formatClock(instance?.status ?? null, elapsed)}</span>
+          <span>{formatClock(instance?.status ?? null, duration)}</span>
         </div>
       </div>
 
@@ -288,7 +263,7 @@ export default function InstanceDeck({
         <button type="button" aria-label="Restart instance" disabled={restartDisabled} onClick={() => runAction("restart")}>
           <RotateCcw size={31} />
         </button>
-        <button className="instance-main-control" type="button" aria-label="Start or pause instance" disabled={mainDisabled} onClick={() => runAction(mainAction)}>
+        <button className="instance-main-control" type="button" aria-label="Start or pause instance" disabled={mainDisabled || (mainAction === "pause" && !canPause(instance))} onClick={() => runAction(mainAction)}>
           {mainButtonIcon}
         </button>
         <button type="button" aria-label="Stop instance" disabled={stopDisabled} onClick={() => runAction("stop")}>
