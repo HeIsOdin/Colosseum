@@ -136,13 +136,14 @@ export function AuthPage() {
     setShowConfirmPassword(false);
   }
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function onSubmit(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
       if (mode === "login") {
+        const { caller } = await auth.login(email, password);
         navigate(returnTarget, { replace: true });
       } else {
         if (password !== confirmPassword) {
