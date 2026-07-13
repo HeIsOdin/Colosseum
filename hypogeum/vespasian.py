@@ -77,14 +77,15 @@ def _create_series_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                sid SERIAL PRIMARY KEY,
+                sid BIGSERIAL PRIMARY KEY,
                 title VARCHAR(255) NOT NULL,
                 description TEXT NOT NULL,
                 host JSONB NOT NULL,
                 starts_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 ends_at TIMESTAMP WITH TIME ZONE,
                 image VARCHAR(255),
-                metadata JSONB
+                metadata JSONB,
+                UNIQUE (sid)
             );
         """).format(sql.Identifier(table_name))
     )
@@ -104,18 +105,20 @@ def _create_challenges_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                cid SERIAL PRIMARY KEY,
-                sid INTEGER REFERENCES {}(sid) ON DELETE CASCADE,
+                cid BIGSERIAL,
+                sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 title VARCHAR(255) NOT NULL,
                 description TEXT NOT NULL,
                 author VARCHAR(255) NOT NULL,
                 difficulty VARCHAR(15) NOT NULL CHECK (difficulty IN ({difficulty})),
                 points INTEGER NOT NULL,
                 category VARCHAR(20) NOT NULL CHECK (category IN ({category})),
-                prerequisite INTEGER REFERENCES {}(cid) ON DELETE SET NULL,
+                prerequisite BIGINT REFERENCES {}(cid) ON DELETE SET NULL,
                 flag VARCHAR(255) NOT NULL,
                 requires_instance BOOLEAN NOT NULL DEFAULT FALSE,
-                file_url VARCHAR(2048)
+                file_url VARCHAR(2048),
+                PRIMARY KEY (cid, sid),
+                UNIQUE (cid)
             );
         """).format(
             sql.Identifier(table_name), sql.Identifier(series_table), sql.Identifier(table_name),
@@ -140,7 +143,7 @@ def _create_user_table(cursor: psycopg2.extensions.cursor) -> None:
                 status VARCHAR(20) NOT NULL CHECK (status IN ({status})) DEFAULT 'active',
                 is_admin BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMPTZ[] NOT NULL DEFAULT ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[]
             );
         """).format(sql.Identifier(user_table), status=status)
     )
@@ -153,7 +156,7 @@ def _create_memberships_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                sid INTEGER REFERENCES {}(sid) ON DELETE CASCADE,
+                sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
                 PRIMARY KEY (sid, pid)
             );
@@ -173,10 +176,10 @@ def _create_flag_submissions_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                subid BIGSERIAL PRIMARY KEY,
-                sid INTEGER REFERENCES {}(sid) ON DELETE CASCADE,
+                subid BIGINT PRIMARY KEY,
+                sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
-                cid INTEGER REFERENCES {}(cid) ON DELETE CASCADE,
+                cid BIGINT REFERENCES {}(cid) ON DELETE CASCADE,
                 submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """).format(
@@ -197,9 +200,9 @@ def _create_challenge_solves_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                sid INTEGER REFERENCES {}(sid) ON DELETE CASCADE,
+                sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
-                cid INTEGER REFERENCES {}(cid) ON DELETE CASCADE,
+                cid BIGINT REFERENCES {}(cid) ON DELETE CASCADE,
                 subid BIGINT REFERENCES {}(subid) ON DELETE CASCADE,
                 solved_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 points INTEGER NOT NULL,
@@ -229,15 +232,15 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                sid INTEGER REFERENCES {}(sid) ON DELETE CASCADE,
-                cid INTEGER REFERENCES {}(cid) ON DELETE CASCADE,
+                sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
+                cid BIGINT REFERENCES {}(cid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
                 host VARCHAR(255),
                 port INTEGER,
                 type VARCHAR(50) NOT NULL CHECK (type IN ({types})) DEFAULT 'private',
                 status VARCHAR(20) NOT NULL CHECK (status IN ({status})) DEFAULT 'starting',
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ[] NOT NULL DEFAULT ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[],
                 PRIMARY KEY (sid, cid, pid)
             );
         """).format(
@@ -255,6 +258,7 @@ def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
         env("POSTGRESQL_USER_TABLE")[0],
         env("POSTGRESQL_INSTANCES_TABLE")[0],
     ]
+    max_history = env("UPDATED_AT_HISTORY_SIZE", "10")[0]
 
     for table_name in table_names:
         trigger_function_name = f"{table_name}_update_timestamp"
@@ -264,15 +268,31 @@ def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
             sql.SQL("""
                 CREATE OR REPLACE FUNCTION {function_name}()
                 RETURNS TRIGGER AS $$
+                DECLARE
+                    max_history INTEGER := {max_history};
+                    new_len INTEGER;
                 BEGIN
                     IF current_setting('session.bypass_trigger', true) = 'true' THEN
                         RETURN NEW;
                     END IF;
-                    NEW.updated_at = CURRENT_TIMESTAMP;
+
+                    IF TG_OP = 'INSERT' THEN
+                        NEW.updated_at = ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[];
+                    ELSIF TG_OP = 'UPDATE' THEN
+                        NEW.updated_at = array_append(OLD.updated_at, CURRENT_TIMESTAMP);
+                        new_len := array_length(NEW.updated_at, 1);
+                        IF new_len > max_history THEN
+                            NEW.updated_at = NEW.updated_at[(new_len - max_history + 1):new_len];
+                        END IF;
+                    END IF;
+
                     RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql;
-            """).format(function_name=sql.Identifier(trigger_function_name))
+            """).format(
+                function_name=sql.Identifier(trigger_function_name),
+                max_history=sql.Literal(int(max_history)),
+            )
         )
 
         cursor.execute(
