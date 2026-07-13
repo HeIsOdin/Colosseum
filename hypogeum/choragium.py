@@ -40,20 +40,42 @@ def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
     logger = logging.getLogger(__name__)
     try:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
-        lease = sql.Literal(int(env('INSTANCE_LEASE', '1800')[0]))
+        lease = int(env('INSTANCE_LEASE', '1800')[0])
         query = sql.SQL("""
-            SELECT sid, cid, host, port, type, status, updated_at, {} AS lease
+            SELECT sid, cid, host, port, type, status, created_at, {} AS lease,
+            updated_at[greatest(array_upper(updated_at, 1) - 1, 1):array_upper(updated_at, 1)] AS updated_at
             FROM {instances_table}
             WHERE sid = %s AND pid = %s AND type = 'private'
             AND status IN ('starting', 'started', 'pausing', 'paused', 'restarting', 'resetting')
-        """).format(lease, instances_table=instances_table)
+        """).format(sql.Literal(lease), instances_table=instances_table)
 
         with db_connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, (sid, pid))
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 rows = cursor.fetchall()
-                return [dict(zip(columns, row)) for row in rows]
+                res = [dict(zip(columns, row)) for row in rows]
+                for r in res:
+                    status: str = r['status']
+                    created_at: datetime = r['created_at']
+                    updated_at: list[datetime] = r['updated_at']
+                    if status == "paused":
+                        r['elapsed'] = min((updated_at[-1] - created_at).total_seconds(), lease)
+                    elif status == "started":
+                        r['elapsed'] = (datetime.now(timezone.utc) - updated_at[0]).total_seconds()
+                    elif status == "resumed":
+                        if len(updated_at) < 2:
+                            r['elapsed'] = (datetime.now(timezone.utc) - created_at).total_seconds()
+                            continue
+                        elapsed_1 = (updated_at[-2] - created_at).total_seconds()
+                        elapsed_2 = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
+                        interim = (updated_at[-1] - updated_at[-2]).total_seconds()
+                        elapsed = elapsed_1 + elapsed_2 - interim
+                        r['elapsed'] = min(max(elapsed, 0), lease)
+                    else:
+                        r['elapsed'] = 0
+                    r['updated_at'] = updated_at[-1] if updated_at else None
+                return res
     except Exception as e:
         logger.exception(f"Error retrieving instances for Series ID {sid} and Player ID {pid}: {e}")
         return []
@@ -89,12 +111,13 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
     logger = logging.getLogger(__name__)
     try:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
-        lease = sql.Literal(int(env('INSTANCE_LEASE', '1800')[0]))
+        lease = int(env('INSTANCE_LEASE', '1800')[0])
         query = sql.SQL("""
-            SELECT sid, cid, host, port, type, status, created_at, updated_at, {} AS lease
+            SELECT sid, cid, host, port, type, status, created_at, {} AS lease,
+            updated_at[greatest(array_upper(updated_at, 1) - 1, 1):array_upper(updated_at, 1)] AS updated_at
             FROM {instances_table}
             WHERE sid = %s AND cid = %s AND pid = %s AND type = 'private'
-        """).format(lease, instances_table=instances_table)
+        """).format(sql.Literal(lease), instances_table=instances_table)
 
         with db_connect() as conn:
             with conn.cursor() as cursor:
@@ -103,14 +126,25 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
                 if row:
                     columns = [desc[0] for desc in cursor.description] if cursor.description else []
                     res = dict(zip(columns, row))
-                    if res['status'] == 'paused':
-                        # NOTE: Read the docstring to understand why 'pauses' are weird
-                        updated_at: datetime = res['updated_at']
-                        created_at: datetime = res['created_at']
-                        now = datetime.now(timezone.utc)
-                        interim = (now - updated_at).total_seconds()
-                        res['updated_at'] = created_at+ timedelta(seconds=interim)
-
+                    status: str = res['status']
+                    created_at: datetime = res['created_at']
+                    updated_at: list[datetime] = res['updated_at']
+                    if status == "paused":
+                        res['elapsed'] = min((updated_at[-1] - created_at).total_seconds(), lease)
+                    elif status == "started":
+                        res['elapsed'] = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
+                    elif status == "resumed":
+                        if len(updated_at) < 2:
+                            res['elapsed'] = (datetime.now(timezone.utc) - created_at).total_seconds()
+                        else:
+                            elapsed_1 = (updated_at[-2] - created_at).total_seconds()
+                            elapsed_2 = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
+                            interim = (updated_at[-1] - updated_at[-2]).total_seconds()
+                            elapsed = elapsed_1 + elapsed_2 - interim
+                            res['elapsed'] = min(max(elapsed, 0), lease)
+                    else:
+                        res['elapsed'] = 0
+                    res['updated_at'] = updated_at[-1] if updated_at else None
                     return res
                 return None
     except Exception as e:
@@ -164,7 +198,8 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
             SELECT c.requires_instance, i.status, i.type, i.created_at, i.updated_at
             FROM {challenges_table} c
             LEFT JOIN LATERAL (
-                SELECT i.sid, i.cid, i.pid, i.type, i.status, i.created_at, i.updated_at
+                SELECT i.sid, i.cid, i.pid, i.type, i.status, i.created_at,
+                i.updated_at[greatest(array_upper(i.updated_at, 1) - 1, 1):array_upper(i.updated_at, 1)] AS updated_at
                 FROM {instances_table} i
                 WHERE i.sid = c.sid AND i.cid = c.cid AND (i.pid = %s OR i.type = 'shared')
                 ORDER BY CASE WHEN i.pid = %s THEN 0 ELSE 1 END
@@ -181,14 +216,14 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
                     return False, f"{sid}:{cid} not found", 404
                 
                 created_at: datetime | None
-                updated_at: datetime | None
+                updated_at: list[datetime]
                 req_inst, status, inst_type, created_at, updated_at = res
                 if inst_type == "shared" and not is_admin:
                     return False, "Shared instances can only be controlled by admins.", 403
                 
                 if not req_inst: raise ValueError(f"The challenge does not require an instance.")
                 
-                if status is None or created_at is None or updated_at is None:
+                if status is None or created_at is None or len(updated_at) == 0:
                     if action != "start": raise ValueError("Instance is non-existent")
                     query = sql.SQL("""
                         SET LOCAL session.bypass_trigger = 'true';
@@ -208,13 +243,15 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
                 if action == "start":
                     if status == "started": raise ValueError("Instance is already started.")
                     if instances >= 3 and action == "start" and status != "paused":
-                        return False, "Too many instances running!. Stop at least one.", 403
+                        return False, "Too many instances running! Stop at least one.", 403
                     intermediate_status = "starting"
                 elif action == "pause":
-                    # NOTE: Instances should pause only if no action has been taken on them
                     if status != "started": raise ValueError("Instance is not started. Cannot pause.")
-                    if created_at != updated_at: raise ValueError("Instance cannot be paused")
+                    if len(updated_at) != 1: raise ValueError("Instance has been acted upon since creation. Cannot pause.")
                     intermediate_status = "pausing"
+                elif action == "resume":
+                    if status != "paused": raise ValueError("Instance is not paused. Cannot resume.")
+                    intermediate_status = "resuming"
                 elif action == "stop":
                     if status == "stopped": raise ValueError("Instance is already stopped.")
                     intermediate_status = "stopping"
@@ -226,12 +263,10 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
                     intermediate_status = "resetting"
                 else: raise ValueError(f"Invalid action: {action}")
                 query = sql.SQL("""
-                        SET LOCAL session.bypass_trigger = %s;
                         UPDATE {instances_table} SET status = %s
                         WHERE sid = %s AND cid = %s AND pid = %s
                     """).format(instances_table=instances_table)
-                bypass_trigger = 'true' if action == "reset" or status == "paused" else 'false'
-                cursor.execute(query, (bypass_trigger, intermediate_status, sid, cid, pid))
+                cursor.execute(query, (intermediate_status, sid, cid, pid))
                 return True, f"Instance is {intermediate_status}", 200  
     except ValueError as ve:
         logger.debug(f"Validation error in controlling challenge instance: {ve}")
@@ -282,22 +317,28 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
                 if current_status is None:
                     raise Exception("Instance status is None, cannot perform mock action.")
                 
-                columns_and_values: dict[str, str] = {}
+                columns_and_values: dict[str, str | None] = {}
                 bypass_trigger = 'false'
                 if current_status == "starting":
                     bypass_trigger = 'true'
                     columns_and_values["status"] = "started"
-                    columns_and_values["host"] = "localhost"  # Mock host
-                    columns_and_values["port"] = "8080"  # Mock port
+                    host, port = "localhost", "8080"  # Mock values for host and port
+                    columns_and_values["host"] = host  # Mock host
+                    columns_and_values["port"] = port  # Mock port
                 elif current_status == "pausing":
                     columns_and_values["status"] = "paused"
                     bypass_trigger = 'true'
+                elif current_status == "resuming":
+                    columns_and_values["status"] = "resumed"
+                    bypass_trigger = 'true'
                 elif current_status == "stopping":
                     columns_and_values["status"] = "stopped"
+                    columns_and_values["host"] = None
+                    columns_and_values["port"] = None
                 elif current_status == "restarting":
                     columns_and_values["status"] = "started"
-                    columns_and_values["host"] = "localhost"  # Mock host
-                    columns_and_values["port"] = "8080"  # Mock port
+                    columns_and_values["host"] = None
+                    columns_and_values["port"] = None
                 elif current_status == "resetting":
                     # NOTE: Resetting the instance should not renew the lease
                     columns_and_values["status"] = "started"
@@ -330,7 +371,8 @@ async def main():
     expiry_query = sql.SQL("""
         SET LOCAL session.bypass_trigger = 'true';
         UPDATE {instances_table} SET status = 'stopping'
-        WHERE (status = 'started' OR status = 'paused') AND updated_at + INTERVAL {lease} < NOW()
+        WHERE (status IN ('started', 'resumed', 'paused')) AND
+        updated_at[array_upper(updated_at, 1)] + INTERVAL {lease} < NOW()
     """).format(
         lease=sql.Literal(f"{lease_duration} seconds"),
         instances_table=instances_table

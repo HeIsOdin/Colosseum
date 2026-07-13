@@ -14,7 +14,7 @@ DIFFICULTY_LEVELS = ['Sanity Check', 'Easy', 'Medium', 'Hard']
 CATEGORIES = ['Warmup', 'Web', 'Crypto', 'Forensics', 'Pwn', 'Misc']
 # NOTE: Know what you are doing. Intermediate states must always end with "ing"
 INSTANCE_STATES = [
-    'starting', 'started', 'pausing', 'paused', 'stopping', 'stopped', 'restarting', 'resetting',
+    'starting', 'started', 'pausing', 'paused', 'resumed', 'resuming', 'stopping', 'stopped', 'restarting', 'resetting',
     'failed'
 ]
 INSTANCES_TYPES = ['private', 'shared']
