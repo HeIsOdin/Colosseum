@@ -98,17 +98,7 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
         challenges_query = sql.SQL("""
             SELECT c.cid, c.title, c.description, c.points, c.category, c.difficulty,
                 c.prerequisite, c.requires_instance, c.file_url, c.author,
-                CASE
-                    WHEN i.cid IS NULL THEN NULL
-                    ELSE json_build_object(
-                        'host', i.host,
-                        'port', i.port,
-                        'type', i.type,
-                        'status', i.status,
-                        'updated_at', i.updated_at,
-                        'lease', %s::INTEGER
-                    )
-                END AS instance,
+
                 COALESCE((
                     SELECT json_agg(
                         json_build_object(
@@ -124,15 +114,6 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
                     LEFT JOIN {u_table} u ON limited_solves.pid = u.pid
                 ), '[]') AS solvers
             FROM {c_table} c
-            LEFT JOIN LATERAL (
-                SELECT i.sid, i.cid, i.host, i.port, i.type, i.status, i.updated_at
-                FROM {i_table} i
-                WHERE i.sid = c.sid AND i.cid = c.cid AND c.requires_instance = TRUE AND(
-                    i.pid = %s OR i.type = 'shared'
-                )
-                ORDER BY CASE WHEN i.pid = %s THEN 0 ELSE 1 END, i.updated_at DESC
-                LIMIT 1
-            ) AS i ON TRUE
             WHERE c.sid = %s
             ORDER BY c.points DESC, c.cid ASC
         """).format(
@@ -187,8 +168,9 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
                 if not _series_has_started(series_data.get('starts_at')):
                     return {}, False, "Series has not started yet.", 403
 
-                lease = int(env('INSTANCE_LEASE', '1800')[0]) # In seconds
-                cursor.execute(challenges_query, (lease, limit, offset, pid, pid, sid))
+                #lease = int(env('INSTANCE_LEASE', '1800')[0]) # In seconds
+                #cursor.execute(challenges_query, (lease, limit, offset, pid, pid, sid))
+                cursor.execute(challenges_query, (limit, offset, sid))
                 challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 challenges_rows = cursor.fetchall()
 
