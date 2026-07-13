@@ -103,6 +103,8 @@ export const InstanceStatusSchema = z.enum([
   "started",
   "pausing",
   "paused",
+  "resuming",
+  "resumed",
   "stopping",
   "stopped",
   "restarting",
@@ -120,6 +122,7 @@ export const InstanceSchema = z.object({
   port: z.coerce.number().nullable().optional(),
   type: InstanceTypeSchema.nullable().optional(),
   status: InstanceStatusSchema.nullable().optional(),
+  elapsed: z.coerce.number().nullable().optional(),
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),
   lease: z.coerce.number().nullable().optional(),
@@ -133,7 +136,7 @@ export const RunningInstanceSchema = InstanceSchema.extend({
 });
 
 export type RunningInstance = z.infer<typeof RunningInstanceSchema>;
-export type InstanceAction = "start" | "pause" | "stop" | "restart" | "reset";
+export type InstanceAction = "start" | "pause" | "resume" | "stop" | "restart" | "reset";
 
 export const ChallengeSchema = z.object({
   cid: z.number(),
