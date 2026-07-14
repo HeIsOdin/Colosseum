@@ -30,7 +30,6 @@ def unauthorized():
     return jsonify({
         "success": False,
         "message": "Authentication required",
-        "redirect": "/login"
     }), 401
 
 @login_manager.user_loader
