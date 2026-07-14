@@ -133,7 +133,6 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
                     if status == "paused":
                         res['elapsed'] = min((updated_at[-1] - created_at).total_seconds(), lease)
                     elif status == "started":
-                        logger.warning(f"{len(updated_at)} updated_at timestamps for instance {sid}:{cid}:{pid}")
                         if len(updated_at) == 1:
                             res['elapsed'] = (datetime.now(timezone.utc) - created_at).total_seconds()
                         elif len(updated_at) == 3:
