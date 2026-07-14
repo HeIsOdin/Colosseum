@@ -144,8 +144,11 @@ def _create_user_table(cursor: psycopg2.extensions.cursor) -> None:
                 password VARCHAR(255) NOT NULL,
                 status VARCHAR(20) NOT NULL CHECK (status IN ({status})) DEFAULT 'active',
                 is_admin BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMPTZ[] NOT NULL DEFAULT ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[]
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                profile_updated_at TIMESTAMP WITH TIME ZONE,
+                password_changed_at TIMESTAMP WITH TIME ZONE,
+                status_changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_login_at TIMESTAMP WITH TIME ZONE
             );
         """).format(sql.Identifier(user_table), status=status)
     )
@@ -264,7 +267,6 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
 def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
     user_table = env("POSTGRESQL_USER_TABLE")[0]
     instances_table = env("POSTGRESQL_INSTANCES_TABLE")[0]
-    max_history = env("UPDATED_AT_HISTORY_SIZE", "10")[0]
 
     user_trigger_function_name = f"{user_table}_update_timestamp"
     user_trigger_name = f"{user_table}_update_timestamp_trigger"
@@ -273,22 +275,22 @@ def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
         sql.SQL("""
             CREATE OR REPLACE FUNCTION {function_name}()
             RETURNS TRIGGER AS $$
-            DECLARE
-                max_history INTEGER := {max_history};
-                new_len INTEGER;
             BEGIN
                 IF current_setting('session.bypass_trigger', true) = 'true' THEN
                     RETURN NEW;
                 END IF;
 
-                IF TG_OP = 'INSERT' THEN
-                    NEW.updated_at = ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[];
-                ELSIF TG_OP = 'UPDATE' THEN
-                    NEW.updated_at = array_append(OLD.updated_at, CURRENT_TIMESTAMP);
-                    new_len := array_length(NEW.updated_at, 1);
-                    IF new_len > max_history THEN
-                        NEW.updated_at = NEW.updated_at[(new_len - max_history + 1):new_len];
-                    END IF;
+                IF NEW.display_name IS DISTINCT FROM OLD.display_name
+                   OR NEW.avatar IS DISTINCT FROM OLD.avatar THEN
+                    NEW.profile_updated_at = CURRENT_TIMESTAMP;
+                END IF;
+
+                IF NEW.password IS DISTINCT FROM OLD.password THEN
+                    NEW.password_changed_at = CURRENT_TIMESTAMP;
+                END IF;
+
+                IF NEW.status IS DISTINCT FROM OLD.status THEN
+                    NEW.status_changed_at = CURRENT_TIMESTAMP;
                 END IF;
 
                 RETURN NEW;
@@ -296,7 +298,6 @@ def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
             $$ LANGUAGE plpgsql;
         """).format(
             function_name=sql.Identifier(user_trigger_function_name),
-            max_history=sql.Literal(int(max_history)),
         )
     )
 
@@ -304,7 +305,7 @@ def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
         sql.SQL("""
             DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};
             CREATE TRIGGER {trigger_name}
-            BEFORE INSERT OR UPDATE ON {table_name}
+            BEFORE UPDATE ON {table_name}
             FOR EACH ROW EXECUTE FUNCTION {function_name}();
         """).format(
             trigger_name=sql.Identifier(user_trigger_name),
