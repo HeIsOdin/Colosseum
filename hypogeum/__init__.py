@@ -17,4 +17,20 @@ INSTANCE_STATES = [
     'starting',  'started', 'pausing', 'paused',  'stopping', 'stopped',
     'resuming', 'restarting', 'resetting', 'failed'
 ]
+ALLOWED_TRANSITIONS = {
+    None: {"start": "starting"},
+    "stopped": {"start": "starting"},
+    "started": {
+        "pause": "pausing",
+        "stop": "stopping",
+        "restart": "restarting",
+        "reset": "resetting",
+    },
+    "paused": {
+        "resume": "resuming",
+        "stop": "stopping",
+        "restart": "restarting",
+    },
+    "failed": {},
+}
 INSTANCES_TYPES = ['private', 'shared']
