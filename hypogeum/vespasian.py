@@ -488,7 +488,7 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                     );
                 END IF;
 
-                IF p_instance_type = 'private' THEN
+                IF v_requested_type = 'private' THEN
                     SELECT COUNT(*) INTO v_active_instances FROM {instances_table} AS i
                     WHERE i.sid = p_sid AND i.pid = p_pid AND i.type = 'private'
                     AND i.status NOT IN ('stopped', 'failed');
