@@ -244,10 +244,10 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
                 type VARCHAR(50) NOT NULL CHECK (type IN ({types})) DEFAULT 'private',
                 status VARCHAR(20) NOT NULL CHECK (status IN ({status})) DEFAULT 'starting',
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP + INTERVAL '1 hour',
+                started_at TIMESTAMP WITH TIME ZONE,
                 paused_at TIMESTAMP WITH TIME ZONE,
-                updated_at TIMESTAMPTZ[] NOT NULL DEFAULT ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[],
+                expires_at TIMESTAMP WITH TIME ZONE,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (sid, cid, pid),
                 FOREIGN KEY (sid, cid) REFERENCES {}(sid, cid) ON DELETE CASCADE
             );
@@ -262,59 +262,90 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
     )
 
 def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
-    table_names = [
-        env("POSTGRESQL_USER_TABLE")[0],
-        env("POSTGRESQL_INSTANCES_TABLE")[0],
-    ]
+    user_table = env("POSTGRESQL_USER_TABLE")[0]
+    instances_table = env("POSTGRESQL_INSTANCES_TABLE")[0]
     max_history = env("UPDATED_AT_HISTORY_SIZE", "10")[0]
 
-    for table_name in table_names:
-        trigger_function_name = f"{table_name}_update_timestamp"
-        trigger_name = f"{table_name}_update_timestamp_trigger"
+    user_trigger_function_name = f"{user_table}_update_timestamp"
+    user_trigger_name = f"{user_table}_update_timestamp_trigger"
 
-        cursor.execute(
-            sql.SQL("""
-                CREATE OR REPLACE FUNCTION {function_name}()
-                RETURNS TRIGGER AS $$
-                DECLARE
-                    max_history INTEGER := {max_history};
-                    new_len INTEGER;
-                BEGIN
-                    IF current_setting('session.bypass_trigger', true) = 'true' THEN
-                        RETURN NEW;
-                    END IF;
-
-                    IF TG_OP = 'INSERT' THEN
-                        NEW.updated_at = ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[];
-                    ELSIF TG_OP = 'UPDATE' THEN
-                        NEW.updated_at = array_append(OLD.updated_at, CURRENT_TIMESTAMP);
-                        new_len := array_length(NEW.updated_at, 1);
-                        IF new_len > max_history THEN
-                            NEW.updated_at = NEW.updated_at[(new_len - max_history + 1):new_len];
-                        END IF;
-                    END IF;
-
+    cursor.execute(
+        sql.SQL("""
+            CREATE OR REPLACE FUNCTION {function_name}()
+            RETURNS TRIGGER AS $$
+            DECLARE
+                max_history INTEGER := {max_history};
+                new_len INTEGER;
+            BEGIN
+                IF current_setting('session.bypass_trigger', true) = 'true' THEN
                     RETURN NEW;
-                END;
-                $$ LANGUAGE plpgsql;
-            """).format(
-                function_name=sql.Identifier(trigger_function_name),
-                max_history=sql.Literal(int(max_history)),
-            )
-        )
+                END IF;
 
-        cursor.execute(
-            sql.SQL("""
-                DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};
-                CREATE TRIGGER {trigger_name}
-                BEFORE INSERT OR UPDATE ON {table_name}
-                FOR EACH ROW EXECUTE FUNCTION {function_name}();
-            """).format(
-                trigger_name=sql.Identifier(trigger_name),
-                table_name=sql.Identifier(table_name),
-                function_name=sql.Identifier(trigger_function_name),
-            )
+                IF TG_OP = 'INSERT' THEN
+                    NEW.updated_at = ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[];
+                ELSIF TG_OP = 'UPDATE' THEN
+                    NEW.updated_at = array_append(OLD.updated_at, CURRENT_TIMESTAMP);
+                    new_len := array_length(NEW.updated_at, 1);
+                    IF new_len > max_history THEN
+                        NEW.updated_at = NEW.updated_at[(new_len - max_history + 1):new_len];
+                    END IF;
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+        """).format(
+            function_name=sql.Identifier(user_trigger_function_name),
+            max_history=sql.Literal(int(max_history)),
         )
+    )
+
+    cursor.execute(
+        sql.SQL("""
+            DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};
+            CREATE TRIGGER {trigger_name}
+            BEFORE INSERT OR UPDATE ON {table_name}
+            FOR EACH ROW EXECUTE FUNCTION {function_name}();
+        """).format(
+            trigger_name=sql.Identifier(user_trigger_name),
+            table_name=sql.Identifier(user_table),
+            function_name=sql.Identifier(user_trigger_function_name),
+        )
+    )
+
+    instance_trigger_function_name = f"{instances_table}_update_timestamp"
+    instance_trigger_name = f"{instances_table}_update_timestamp_trigger"
+
+    cursor.execute(
+        sql.SQL("""
+            CREATE OR REPLACE FUNCTION {function_name}()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                IF current_setting('session.bypass_trigger', true) = 'true' THEN
+                    RETURN NEW;
+                END IF;
+
+                NEW.updated_at = CURRENT_TIMESTAMP;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+        """).format(
+            function_name=sql.Identifier(instance_trigger_function_name),
+        )
+    )
+
+    cursor.execute(
+        sql.SQL("""
+            DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};
+            CREATE TRIGGER {trigger_name}
+            BEFORE UPDATE ON {table_name}
+            FOR EACH ROW EXECUTE FUNCTION {function_name}();
+        """).format(
+            trigger_name=sql.Identifier(instance_trigger_name),
+            table_name=sql.Identifier(instances_table),
+            function_name=sql.Identifier(instance_trigger_function_name),
+        )
+    )
 
 def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> None:
     """
@@ -358,7 +389,7 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
             v_status TEXT;
             v_previous_status TEXT;
             v_created_at TIMESTAMP WITH TIME ZONE;
-            v_updated_at TIMESTAMP WITH TIME ZONE[];
+            v_updated_at TIMESTAMP WITH TIME ZONE;
         BEGIN
             /* Normalize and validate the caller-supplied values */
             v_action := LOWER(BTRIM(COALESCE(p_action, '')));
@@ -457,7 +488,7 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                     );
                 END IF;
 
-                IF v_requested_type = 'private' THEN
+                IF p_instance_type = 'private' THEN
                     SELECT COUNT(*) INTO v_active_instances FROM {instances_table} AS i
                     WHERE i.sid = p_sid AND i.pid = p_pid AND i.type = 'private'
                     AND i.status NOT IN ('stopped', 'failed');
@@ -548,8 +579,8 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 END IF;
             END IF;
 
-            /* Preserve the current reset behavior: resetting does not append a
-             * new updated_at timestamp and therefore does not renew the lease.
+            /* Preserve the current reset behavior: resetting does not advance
+             * updated_at and therefore does not renew the lease.
              */
             PERFORM set_config(
                 'session.bypass_trigger',
