@@ -14,23 +14,45 @@ DIFFICULTY_LEVELS = ['Sanity Check', 'Easy', 'Medium', 'Hard']
 CATEGORIES = ['Warmup', 'Web', 'Crypto', 'Forensics', 'Pwn', 'Misc']
 # NOTE: Know what you are doing. Intermediate states must always end with "ing"
 INSTANCE_STATES = [
-    'starting',  'started', 'pausing', 'paused',  'stopping', 'stopped',
+    'starting', 'started', 'pausing', 'paused', 'stopping', 'stopped',
     'resuming', 'restarting', 'resetting', 'failed'
 ]
-ALLOWED_TRANSITIONS = {
-    None: {"start": "starting"},
-    "stopped": {"start": "starting"},
-    "started": {
-        "pause": "pausing",
-        "stop": "stopping",
-        "restart": "restarting",
-        "reset": "resetting",
+
+INSTANCE_TRANSITIONS = {
+    None: {
+        'start': {'intermediate': 'starting', 'final': 'started'},
     },
-    "paused": {
-        "resume": "resuming",
-        "stop": "stopping",
-        "restart": "restarting",
+    'stopped': {
+        'start': {'intermediate': 'starting', 'final': 'started'},
     },
-    "failed": {},
+    'started': {
+        'pause': {'intermediate': 'pausing', 'final': 'paused'},
+        'stop': {'intermediate': 'stopping', 'final': 'stopped'},
+        'restart': {'intermediate': 'restarting', 'final': 'started'},
+        'reset': {'intermediate': 'resetting', 'final': 'started'},
+    },
+    'paused': {
+        'resume': {'intermediate': 'resuming', 'final': 'started'},
+        'stop': {'intermediate': 'stopping', 'final': 'stopped'},
+        'restart': {'intermediate': 'restarting', 'final': 'started'},
+    },
+    'failed': {},
 }
+
+# Compatibility projection used by the existing control function.
+ALLOWED_TRANSITIONS = {
+    previous_status: {
+        action: transition['intermediate']
+        for action, transition in actions.items()
+    }
+    for previous_status, actions in INSTANCE_TRANSITIONS.items()
+}
+
+# Worker projection derived from the same source of truth.
+WORKER_TRANSITIONS = {
+    transition['intermediate']: transition['final']
+    for actions in INSTANCE_TRANSITIONS.values()
+    for transition in actions.values()
+}
+
 INSTANCES_TYPES = ['private', 'shared']
