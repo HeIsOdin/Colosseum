@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import (
-    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges,
 )
 from hypogeum.vomitoria import (
     flag_hash, series_signup_required, admin_required, cooldown_check, locked_challenge_check
@@ -27,7 +27,11 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         required = {"title", "description", "author", "points", "category", "difficulty", "flag"}
         optional = {"prerequisite", "requires_instance", "file_url"}
         allowed = required | optional
@@ -84,6 +88,8 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
                 normalized_challenge.pop("file_url", None)
             elif len(file_url) > 2048:
                 return "", False, "file_url must not exceed 2048 characters.", 400
+            elif not file_url.startswith("https://"):
+                return "", False, "file_url must start with  or https://", 400
             else:
                 normalized_challenge["file_url"] = file_url
 
