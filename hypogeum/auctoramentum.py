@@ -4,7 +4,7 @@ from flask_login import login_required, current_user
 from datetime import datetime, timedelta
 from hypogeum.vomitoria import admin_required
 from hypogeum.armamentarium import (
-    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges,
 )
 
 import json
@@ -82,7 +82,11 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
 
         series_table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
@@ -195,7 +199,6 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID 
                     series_data['arena_stats'] = _default_arena_stats()
 
         return series_data, True, "Series data retrieved successfully.", 200
-
     except ValueError as ve:
         logger.debug(f"Validation error while retrieving series data for Series ID {sid}: {ve}")
         return {}, False, str(ve), 404
@@ -224,7 +227,11 @@ def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
@@ -348,7 +355,11 @@ def _delete_series(sid: int) -> tuple[bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE sid = %s").format(
             table=table
@@ -386,7 +397,11 @@ def _join_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
         table_name = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
         query = sql.SQL("INSERT INTO {table} (sid, pid) VALUES (%s, %s) ON CONFLICT DO NOTHING"
@@ -424,7 +439,11 @@ def _leave_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
         user_table = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE sid = %s AND pid = %s").format(
