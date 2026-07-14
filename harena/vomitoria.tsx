@@ -144,6 +144,7 @@ export function AuthPage() {
     try {
       if (mode === "login") {
         const { caller } = await auth.login(email, password);
+        await auth.refresh();
         navigate(returnTarget, { replace: true });
       } else {
         if (password !== confirmPassword) {
