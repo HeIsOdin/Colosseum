@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
+import asyncio
 import logging
 import uuid
 
@@ -240,3 +240,28 @@ def process_one_instance() -> bool:
         )
         fail_instance(instance)
         return False
+
+
+async def main() -> None:
+    poll_seconds = float(env('INSTANCE_WORKER_POLL_SECONDS', '5')[0])
+
+    while True:
+        try:
+            stale_count = fail_stale_claims()
+            if stale_count:
+                logger.warning('Failed and released %s stale instance claim(s).', stale_count)
+
+            process_one_instance()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Instance worker cycle failed.')
+
+        await asyncio.sleep(poll_seconds)
+
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
