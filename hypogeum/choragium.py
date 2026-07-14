@@ -43,9 +43,9 @@ def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
         lease = int(env('INSTANCE_LEASE', '1800')[0])
         query = sql.SQL("""
             SELECT sid, cid, host, port, type, status, created_at, {} AS lease,
-            updated_at[greatest(array_upper(updated_at, 1) - 1, 1):array_upper(updated_at, 1)] AS updated_at
+            updated_at[greatest(array_upper(updated_at, 1) - 2, 1):array_upper(updated_at, 1)] AS updated_at
             FROM {instances_table}
-            WHERE sid = %s AND pid = %s AND type = 'private'
+            WHERE sid = %s AND pid = %s
             AND status IN ('starting', 'started', 'pausing', 'paused', 'restarting', 'resetting')
         """).format(sql.Literal(lease), instances_table=instances_table)
 
@@ -62,19 +62,20 @@ def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
                     if status == "paused":
                         r['elapsed'] = min((updated_at[-1] - created_at).total_seconds(), lease)
                     elif status == "started":
-                        r['elapsed'] = (datetime.now(timezone.utc) - updated_at[0]).total_seconds()
-                    elif status == "resumed":
-                        if len(updated_at) < 2:
+                        if len(updated_at) == 1:
                             r['elapsed'] = (datetime.now(timezone.utc) - created_at).total_seconds()
-                            continue
-                        elapsed_1 = (updated_at[-2] - created_at).total_seconds()
-                        elapsed_2 = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
-                        interim = (updated_at[-1] - updated_at[-2]).total_seconds()
-                        elapsed = elapsed_1 + elapsed_2 - interim
-                        r['elapsed'] = min(max(elapsed, 0), lease)
+                        elif len(updated_at) == 2:
+                            elapsed_before_pause = (updated_at[-2] - created_at).total_seconds()
+                            elapsed_after_resume = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
+                            elapsed = elapsed_before_pause + elapsed_after_resume
+                            r['elapsed'] = elapsed
+                        else:
+                            r['elapsed'] = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
                     else:
                         r['elapsed'] = 0
+                    r['elapsed'] = min(max(r['elapsed'], 0), lease)
                     r['updated_at'] = updated_at[-1] if updated_at else None
+                    r['can_pause'] = len(updated_at) == 1
                 return res
     except Exception as e:
         logger.exception(f"Error retrieving instances for Series ID {sid} and Player ID {pid}: {e}")
@@ -114,9 +115,9 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
         lease = int(env('INSTANCE_LEASE', '1800')[0])
         query = sql.SQL("""
             SELECT sid, cid, host, port, type, status, created_at, {} AS lease,
-            updated_at[greatest(array_upper(updated_at, 1) - 1, 1):array_upper(updated_at, 1)] AS updated_at
+            updated_at[greatest(array_upper(updated_at, 1) - 2, 1):array_upper(updated_at, 1)] AS updated_at
             FROM {instances_table}
-            WHERE sid = %s AND cid = %s AND pid = %s AND type = 'private'
+            WHERE sid = %s AND cid = %s AND pid = %s
         """).format(sql.Literal(lease), instances_table=instances_table)
 
         with db_connect() as conn:
@@ -132,19 +133,20 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
                     if status == "paused":
                         res['elapsed'] = min((updated_at[-1] - created_at).total_seconds(), lease)
                     elif status == "started":
-                        res['elapsed'] = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
-                    elif status == "resumed":
-                        if len(updated_at) < 2:
+                        if len(updated_at) == 1:
                             res['elapsed'] = (datetime.now(timezone.utc) - created_at).total_seconds()
+                        elif len(updated_at) == 2:
+                            elapsed_before_pause = (updated_at[-2] - created_at).total_seconds()
+                            elapsed_after_resume = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
+                            elapsed = elapsed_before_pause + elapsed_after_resume
+                            res['elapsed'] = elapsed
                         else:
-                            elapsed_1 = (updated_at[-2] - created_at).total_seconds()
-                            elapsed_2 = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
-                            interim = (updated_at[-1] - updated_at[-2]).total_seconds()
-                            elapsed = elapsed_1 + elapsed_2 - interim
-                            res['elapsed'] = min(max(elapsed, 0), lease)
+                            res['elapsed'] = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
                     else:
                         res['elapsed'] = 0
+                    res['elapsed'] = min(max(res['elapsed'], 0), lease)
                     res['updated_at'] = updated_at[-1] if updated_at else None
+                    res['can_pause'] = len(updated_at) == 1
                     return res
                 return None
     except Exception as e:
@@ -263,10 +265,12 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
                     intermediate_status = "resetting"
                 else: raise ValueError(f"Invalid action: {action}")
                 query = sql.SQL("""
+                        SET LOCAL session.bypass_trigger = %s;
                         UPDATE {instances_table} SET status = %s
                         WHERE sid = %s AND cid = %s AND pid = %s
                     """).format(instances_table=instances_table)
-                cursor.execute(query, (intermediate_status, sid, cid, pid))
+                bypass_trigger = 'true' if intermediate_status == "resetting" else 'false'
+                cursor.execute(query, (bypass_trigger, intermediate_status, sid, cid, pid))
                 return True, f"Instance is {intermediate_status}", 200  
     except ValueError as ve:
         logger.debug(f"Validation error in controlling challenge instance: {ve}")
@@ -304,7 +308,8 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
     try:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
         query = sql.SQL("""
-            SELECT status FROM {instances_table} WHERE sid = %s AND cid = %s AND pid = %s
+            SELECT status, host, port, created_at
+            FROM {instances_table} WHERE sid = %s AND cid = %s AND pid = %s
         """).format(instances_table=instances_table)
         with db_connect() as conn:
             with conn.cursor() as cursor:
@@ -313,7 +318,7 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
                 if not res:
                     logger.error(f"No instance found for Series {sid}, Challenge {cid}, Player {pid}.")
                     return
-                current_status = res[0]
+                current_status, host, port, created_at = res
                 if current_status is None:
                     raise Exception("Instance status is None, cannot perform mock action.")
                 
@@ -322,14 +327,15 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
                 if current_status == "starting":
                     bypass_trigger = 'true'
                     columns_and_values["status"] = "started"
-                    host, port = "localhost", "8080"  # Mock values for host and port
+                    host = "localhost"  if host is None else host  # Mock host
+                    port = "8080" if port is None else port  # Mock port
                     columns_and_values["host"] = host  # Mock host
                     columns_and_values["port"] = port  # Mock port
                 elif current_status == "pausing":
                     columns_and_values["status"] = "paused"
                     bypass_trigger = 'true'
                 elif current_status == "resuming":
-                    columns_and_values["status"] = "resumed"
+                    columns_and_values["status"] = "started"
                     bypass_trigger = 'true'
                 elif current_status == "stopping":
                     columns_and_values["status"] = "stopped"
@@ -337,8 +343,11 @@ def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
                     columns_and_values["port"] = None
                 elif current_status == "restarting":
                     columns_and_values["status"] = "started"
-                    columns_and_values["host"] = None
-                    columns_and_values["port"] = None
+                    host, port = "oluwajuwon.dev", "8081" # Mock values for host and port
+                    columns_and_values["host"] = host
+                    columns_and_values["port"] = port
+                    # Reset updated_at for restart
+                    #columns_and_values["updated_at"] = f"array_append(updated_at, {created_at})" 
                 elif current_status == "resetting":
                     # NOTE: Resetting the instance should not renew the lease
                     columns_and_values["status"] = "started"
@@ -371,7 +380,7 @@ async def main():
     expiry_query = sql.SQL("""
         SET LOCAL session.bypass_trigger = 'true';
         UPDATE {instances_table} SET status = 'stopping'
-        WHERE (status IN ('started', 'resumed', 'paused')) AND
+        WHERE status = 'started' AND
         updated_at[array_upper(updated_at, 1)] + INTERVAL {lease} < NOW()
     """).format(
         lease=sql.Literal(f"{lease_duration} seconds"),
