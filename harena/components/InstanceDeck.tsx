@@ -60,31 +60,35 @@ function elapsedSecondsSince(value?: string | null, now = Date.now(), duration?:
 
 function buildInstanceUrl(host?: string | null, port?: number | null) {
   if (!host) return null;
-  if (/^https?:\/\//i.test(host)) {
-    const url = new URL(host);
-    if (port && !url.port) url.port = String(port);
-    return url.toString();
+
+  try {
+    if (/^https?:\/\//i.test(host)) {
+      const url = new URL(host);
+      if (port && !url.port) url.port = String(port);
+      return url.toString();
+    }
+
+    return `http://${host}${port ? `:${port}` : ""}`;
+  } catch {
+    return null;
   }
-  return `http://${host}${port ? `:${port}` : ""}`;
 }
 
 function getChallengeTitle(challenges: Challenge[], cid: number) {
   return challenges.find((challenge) => challenge.cid === cid)?.title ?? `Challenge ${cid}`;
 }
 
-function canPause(instance: Instance | null): Boolean {
+function canPause(instance: Instance | null): boolean {
   return Boolean(
     instance?.status === "started" &&
-    instance.created_at &&
-    instance.updated_at &&
-    new Date(instance?.created_at).getTime() === new Date(instance?.updated_at).getTime()
+    instance.created_at && instance.updated_at && instance.can_pause
   );
 }
 
 function getMainAction(instance: Instance | null): InstanceAction | null {
   if (!instance?.status || instance.status === "stopped") return "start";
   if (instance.status === "paused") return "resume";
-  if (["started", "resumed"].includes(instance.status)) return "pause";
+  if (instance.status == "started") return "pause";
   return null;
 }
 
@@ -149,7 +153,7 @@ export default function InstanceDeck({
       await queryClient.invalidateQueries({ queryKey: ["instances", sid] });
     },
     onError: (err, _action, context) => {
-      if (context?.existingInstance) setInstance(context?.existingInstance ?? null);
+      setInstance(context?.existingInstance ?? null);
       onMessage(null);
       onError(err instanceof Error ? err.message : "Instance command failed.");
     },
@@ -184,6 +188,9 @@ export default function InstanceDeck({
     queryKey: ["instances", sid],
     queryFn: () => api.listInstances(sid),
     enabled: cycleOpen,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     refetchInterval: cycleOpen ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
@@ -305,7 +312,7 @@ export default function InstanceDeck({
             ) : null}
             {runningInstancesQuery.data && runningInstancesQuery.data.length > 0 ? (
               <div className="instance-modal-list">
-                {runningInstancesQuery.data.map((entry) => (
+                {runningInstancesQuery.data.filter((e) => e.type == "private").map((entry) => (
                   <div className="instance-modal-row" key={`${entry.sid}:${entry.cid}`}>
                     <div>
                       <strong>{getChallengeTitle(challenges, entry.cid)}</strong>
