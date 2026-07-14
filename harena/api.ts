@@ -54,7 +54,7 @@ export const SeriesHostSchema = z.preprocess(
     name: z.string().default("Colosseum"),
     url: z.string().nullable().optional(),
     logo_url: z.string().nullable().optional(),
-  }).passthrough(),
+  }).catchall(z.unknown()),
 );
 
 export type SeriesHost = z.infer<typeof SeriesHostSchema>;
@@ -125,6 +125,7 @@ export const InstanceSchema = z.object({
   elapsed: z.coerce.number().nullable().optional(),
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),
+  can_pause: z.boolean().default(false),
   lease: z.coerce.number().nullable().optional(),
 });
 
@@ -200,7 +201,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  let payload: unknown = null;
+
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = { message: text || `Request failed with status ${response.status}` };
+  }
 
   if (!response.ok) {
     const message =
