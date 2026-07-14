@@ -113,12 +113,12 @@ def _create_challenges_table(cursor: psycopg2.extensions.cursor) -> None:
                 difficulty VARCHAR(15) NOT NULL CHECK (difficulty IN ({difficulty})),
                 points INTEGER NOT NULL,
                 category VARCHAR(20) NOT NULL CHECK (category IN ({category})),
-                prerequisite BIGINT REFERENCES {}(cid) ON DELETE SET NULL,
+                prerequisite BIGINT,
                 flag VARCHAR(255) NOT NULL,
                 requires_instance BOOLEAN NOT NULL DEFAULT FALSE,
                 file_url VARCHAR(2048),
                 PRIMARY KEY (cid, sid),
-                UNIQUE (cid)
+                FOREIGN KEY (sid, prerequisite) REFERENCES {}(sid, cid) ON DELETE SET NULL
             );
         """).format(
             sql.Identifier(table_name), sql.Identifier(series_table), sql.Identifier(table_name),
@@ -176,11 +176,12 @@ def _create_flag_submissions_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                subid BIGINT PRIMARY KEY,
+                subid BIGSERIAL PRIMARY KEY,
                 sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
-                cid BIGINT REFERENCES {}(cid) ON DELETE CASCADE,
-                submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                cid BIGINT,
+                submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sid, cid) REFERENCES {}(sid, cid) ON DELETE CASCADE
                 );
             """).format(
                 sql.Identifier(table_name),
@@ -202,18 +203,19 @@ def _create_challenge_solves_table(cursor: psycopg2.extensions.cursor) -> None:
             CREATE TABLE IF NOT EXISTS {} (
                 sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
-                cid BIGINT REFERENCES {}(cid) ON DELETE CASCADE,
+                cid BIGINT,
                 subid BIGINT REFERENCES {}(subid) ON DELETE CASCADE,
                 solved_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 points INTEGER NOT NULL,
-                PRIMARY KEY (sid, pid, cid)
+                PRIMARY KEY (sid, pid, cid),
+                FOREIGN KEY (sid, cid) REFERENCES {}(sid, cid) ON DELETE CASCADE
             );
         """).format(
             sql.Identifier(table_name),
             sql.Identifier(series_table),
             sql.Identifier(user_table),
+            sql.Identifier(submissions_table),
             sql.Identifier(challenges_table),
-            sql.Identifier(submissions_table)
         )
     )
 
@@ -233,7 +235,7 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
                 sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
-                cid BIGINT REFERENCES {}(cid) ON DELETE CASCADE,
+                cid BIGINT,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
                 host VARCHAR(255),
                 port INTEGER,
@@ -241,13 +243,14 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
                 status VARCHAR(20) NOT NULL CHECK (status IN ({status})) DEFAULT 'starting',
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ[] NOT NULL DEFAULT ARRAY[CURRENT_TIMESTAMP]::TIMESTAMPTZ[],
-                PRIMARY KEY (sid, cid, pid)
+                PRIMARY KEY (sid, cid, pid),
+                FOREIGN KEY (sid, cid) REFERENCES {}(sid, cid) ON DELETE CASCADE
             );
         """).format(
             sql.Identifier(table_name),
             sql.Identifier(series_table),
-            sql.Identifier(challenges_table),
             sql.Identifier(player_table),
+            sql.Identifier(challenges_table),
             types=types,
             status=status
         )
