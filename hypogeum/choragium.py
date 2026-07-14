@@ -43,10 +43,10 @@ def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
         lease = int(env('INSTANCE_LEASE', '1800')[0])
         query = sql.SQL("""
             SELECT sid, cid, host, port, type, status, created_at, {} AS lease,
-            updated_at[greatest(array_upper(updated_at, 1) - 2, 1):array_upper(updated_at, 1)] AS updated_at
+            updated_at[greatest(array_upper(updated_at, 1) - 3, 1):array_upper(updated_at, 1)] AS updated_at
             FROM {instances_table}
             WHERE sid = %s AND pid = %s
-            AND status IN ('starting', 'started', 'pausing', 'paused', 'restarting', 'resetting')
+            AND status <> 'stopped'
         """).format(sql.Literal(lease), instances_table=instances_table)
 
         with db_connect() as conn:
@@ -115,7 +115,7 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
         lease = int(env('INSTANCE_LEASE', '1800')[0])
         query = sql.SQL("""
             SELECT sid, cid, host, port, type, status, created_at, {} AS lease,
-            updated_at[greatest(array_upper(updated_at, 1) - 2, 1):array_upper(updated_at, 1)] AS updated_at
+            updated_at[greatest(array_upper(updated_at, 1) - 3, 1):array_upper(updated_at, 1)] AS updated_at
             FROM {instances_table}
             WHERE sid = %s AND cid = %s AND pid = %s
         """).format(sql.Literal(lease), instances_table=instances_table)
@@ -133,9 +133,10 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
                     if status == "paused":
                         res['elapsed'] = min((updated_at[-1] - created_at).total_seconds(), lease)
                     elif status == "started":
+                        logger.warning(f"{len(updated_at)} updated_at timestamps for instance {sid}:{cid}:{pid}")
                         if len(updated_at) == 1:
                             res['elapsed'] = (datetime.now(timezone.utc) - created_at).total_seconds()
-                        elif len(updated_at) == 2:
+                        elif len(updated_at) == 3:
                             elapsed_before_pause = (updated_at[-2] - created_at).total_seconds()
                             elapsed_after_resume = (datetime.now(timezone.utc) - updated_at[-1]).total_seconds()
                             elapsed = elapsed_before_pause + elapsed_after_resume

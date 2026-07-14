@@ -104,7 +104,6 @@ export const InstanceStatusSchema = z.enum([
   "pausing",
   "paused",
   "resuming",
-  "resumed",
   "stopping",
   "stopped",
   "restarting",

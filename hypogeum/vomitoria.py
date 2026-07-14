@@ -46,7 +46,7 @@ def load_user(user_id: str) -> User | None:
         memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
 
         query = sql.SQL("""
-            SELECT u.pid, u.is_admin, u.display_name, u.avatar,
+            SELECT u.pid, u.is_admin, u.display_name, u.avatar, u.status,
             COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
             FROM {users} u
             LEFT JOIN {memberships} m ON u.pid = m.pid
@@ -65,7 +65,10 @@ def load_user(user_id: str) -> User | None:
         if row is None:
             return None
 
-        pid, is_admin, display_name, avatar, sids = row
+        pid, is_admin, display_name, avatar, status, sids = row
+        if status not in ["active", "verified"]:
+            logger.warning(f"User {user_id} has invalid status: {status}")
+            return None
         return User(
             pid=pid,
             is_admin=bool(is_admin),
@@ -333,7 +336,7 @@ def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
         memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
 
         query = sql.SQL("""
-            SELECT u.pid, u.password, u.is_admin, u.status,
+            SELECT u.pid, u.password, u.is_admin, u.status, u.display_name, u.avatar,
             COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
             FROM {users} u
             LEFT JOIN {memberships} m ON u.pid = m.pid
@@ -352,7 +355,7 @@ def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
         if row is None:
             return {}, False, "Invalid credentials", 401
 
-        pid, password_hash, is_admin, status, sids = row
+        pid, password_hash, is_admin, status, display_name, avatar, sids = row
 
         if password_hash is None:
             return {}, False, "Invalid credentials", 401
@@ -367,6 +370,8 @@ def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
             "pid": str(pid),
             "sids": list(sids or []),
             "is_admin": bool(is_admin),
+            "display_name": display_name or "Anonymous",
+            "avatar": avatar or "default"
         }, True, "", 200
 
     except ValueError as ve:
