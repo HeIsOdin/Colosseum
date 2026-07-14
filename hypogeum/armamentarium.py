@@ -113,3 +113,7 @@ def raise_on_missing_series_and_challenges(redis_client: redis.Redis, sid_str: i
     if cid is None: return  # No challenge ID to check, return early
     cids = sids[sid]["cids"]
     if cid not in cids: raise ValueError(f"Challenge {cid} is missing for Series {sid}. Please refresh the data. {data}")
+
+class SeriesOrChallengeNotFoundError(ValueError):
+    """Custom exception for missing series or challenge."""
+    pass
