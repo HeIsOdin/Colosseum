@@ -14,7 +14,10 @@ import {
 } from "lucide-react";
 import {
   api,
-  type Challenge, type Instance, type InstanceAction, type InstanceStatus
+  type Challenge,
+  type Instance,
+  type InstanceAction,
+  type InstanceStatus,
 } from "@/api";
 import "./styles.css";
 
@@ -27,16 +30,14 @@ const INTERMEDIATE_STATES = new Set<InstanceStatus>([
   "resetting",
 ]);
 
-// const OPTIMISTIC_STATUS_BY_ACTION: Record<InstanceAction, InstanceStatus> = {
-//   start: "starting",
-//   pause: "pausing",
-//   stop: "stopping",
-//   restart: "restarting",
-//   reset: "resetting",
-// };
+const LIVE_TIMER_STATES = new Set<InstanceStatus>([
+  "started",
+  "pausing",
+  "resetting",
+]);
 
 function formatClock(status: InstanceStatus | null, totalSeconds: number | null | undefined) {
-  if (!status || status === "stopped") return "--:--";
+  if (!status || status === "stopped" || status === "failed") return "--:--";
   if (totalSeconds === null || totalSeconds === undefined || !Number.isFinite(totalSeconds)) return "--:--";
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
@@ -50,12 +51,66 @@ function formatClock(status: InstanceStatus | null, totalSeconds: number | null 
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
-function elapsedSecondsSince(value?: string | null, now = Date.now(), duration?: number | null) {
-  if (!value) return null;
-  const updatedAt = new Date(value).getTime();
-  if (!Number.isFinite(updatedAt)) return null;
-  if (!duration || !Number.isFinite(duration) || duration <= 0) return Math.max(0, Math.floor((now - updatedAt) / 1000));
-  return Math.min(Math.max(0, Math.floor((now - updatedAt) / 1000)), duration);
+type InstanceTimer = {
+  elapsedSeconds: number | null;
+  progressPercent: number;
+};
+
+function calculateInstanceTimer(instance: Instance | null, nowMs: number): InstanceTimer {
+  if (!instance) return { elapsedSeconds: null, progressPercent: 0 };
+
+  const leaseSeconds = instance.lease_seconds;
+  if (!Number.isFinite(leaseSeconds) || leaseSeconds <= 0) {
+    return { elapsedSeconds: null, progressPercent: 0 };
+  }
+
+  if (instance.status === "starting") {
+    return { elapsedSeconds: 0, progressPercent: 0 };
+  }
+
+  if (
+    instance.status === "stopped" ||
+    instance.status === "failed" ||
+    instance.status === "stopping" ||
+    instance.status === "restarting"
+  ) {
+    return { elapsedSeconds: null, progressPercent: 0 };
+  }
+
+  if (!instance.expires_at) {
+    return { elapsedSeconds: null, progressPercent: 0 };
+  }
+
+  const expiresAtMs = new Date(instance.expires_at).getTime();
+  if (!Number.isFinite(expiresAtMs)) {
+    return { elapsedSeconds: null, progressPercent: 0 };
+  }
+
+  let referenceMs = nowMs;
+  if (instance.status === "paused" || instance.status === "resuming") {
+    if (!instance.paused_at) {
+      return { elapsedSeconds: null, progressPercent: 0 };
+    }
+
+    referenceMs = new Date(instance.paused_at).getTime();
+    if (!Number.isFinite(referenceMs)) {
+      return { elapsedSeconds: null, progressPercent: 0 };
+    }
+  }
+
+  const remainingSeconds = Math.min(
+    leaseSeconds,
+    Math.max(0, (expiresAtMs - referenceMs) / 1000),
+  );
+  const elapsedSeconds = Math.min(
+    leaseSeconds,
+    Math.max(0, leaseSeconds - remainingSeconds),
+  );
+
+  return {
+    elapsedSeconds,
+    progressPercent: Math.min(100, Math.max(0, (elapsedSeconds / leaseSeconds) * 100)),
+  };
 }
 
 function buildInstanceUrl(host?: string | null, port?: number | null) {
@@ -78,18 +133,16 @@ function getChallengeTitle(challenges: Challenge[], cid: number) {
   return challenges.find((challenge) => challenge.cid === cid)?.title ?? `Challenge ${cid}`;
 }
 
-function canPause(instance: Instance | null): boolean {
-  return Boolean(
-    instance?.status === "started" &&
-    instance.created_at && instance.updated_at && instance.can_pause
-  );
+function getMainAction(instance: Instance | null): InstanceAction | null {
+  if (!instance || instance.status === "stopped") return "start";
+  if (instance.status === "paused") return "resume";
+  if (instance.status === "started") return "pause";
+  return null;
 }
 
-function getMainAction(instance: Instance | null): InstanceAction | null {
-  if (!instance?.status || instance.status === "stopped") return "start";
-  if (instance.status === "paused") return "resume";
-  if (instance.status == "started") return "pause";
-  return null;
+function canRunAction(instance: Instance | null, action: InstanceAction): boolean {
+  if (!instance) return action === "start";
+  return instance.allowed_actions.includes(action);
 }
 
 function getInstancePollInterval(status: InstanceStatus | null | undefined, pending: boolean): number | false {
@@ -125,7 +178,6 @@ export default function InstanceDeck({
   const requiresInstance = challenge.requires_instance;
   const isShared = instance?.type === "shared";
   const isIntermediate = Boolean(status && INTERMEDIATE_STATES.has(status));
-  const hasInstance = Boolean(instance);
   const isPendingInstance = isIntermediate;
   const isWebChallenge = challenge.category.toLowerCase().includes("web");
   const instanceUrl = buildInstanceUrl(instance?.host, instance?.port);
@@ -135,10 +187,12 @@ export default function InstanceDeck({
   }, [sid, challenge.cid]);
 
   useEffect(() => {
-    if (!requiresInstance || !instance?.updated_at) return;
-    const timeoutId = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => window.clearInterval(timeoutId);
-  }, [instance?.updated_at, requiresInstance]);
+    setNow(Date.now());
+    if (!status || !LIVE_TIMER_STATES.has(status) || !instance?.expires_at) return;
+
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [status, instance?.expires_at, instance?.paused_at]);
 
   const instanceMutation = useMutation({
     mutationFn: (action: InstanceAction) => api.controlInstance(sid, challenge.cid, action),
@@ -161,8 +215,8 @@ export default function InstanceDeck({
 
   const actionPending = instanceMutation.isPending;
   const pollInterval = getInstancePollInterval(status, actionPending);
-  const shouldPollSelectedInstance = requiresInstance && !locked && !isShared && pollInterval !== false;
-  const canControlLifecycle = requiresInstance && !locked && (instance === null || instance.type === "private");
+  const shouldPollSelectedInstance = requiresInstance && !locked && pollInterval !== false;
+  const canControlLifecycle = requiresInstance && !locked && (instance === null || !isShared);
 
   const selectedInstanceQuery = useQuery({
     queryKey: ["instance", sid, challenge.cid],
@@ -177,8 +231,6 @@ export default function InstanceDeck({
   });
 
   useEffect(() => {
-    // if (!shouldPollSelectedInstance || selectedInstanceQuery.data === undefined) return;
-    // if (selectedInstanceQuery.data === null && (actionPending || isPendingInstance)) return;
     if (selectedInstanceQuery.data !== undefined) {
       setInstance(selectedInstanceQuery.data);
     }
@@ -197,19 +249,15 @@ export default function InstanceDeck({
 
   const controlsBlocked = !canControlLifecycle || actionPending || isPendingInstance || status === "failed";
   const mainAction = getMainAction(instance);
-  const mainDisabled = controlsBlocked || mainAction === null;
-  const restartDisabled = controlsBlocked || !hasInstance || status === "stopped";
-  const stopDisabled = controlsBlocked || !hasInstance || status === "stopped";
-  const resetDisabled = controlsBlocked || !hasInstance || status === "stopped";
+  const mainDisabled = controlsBlocked || mainAction === null || !canRunAction(instance, mainAction);
+  const restartDisabled = controlsBlocked || !canRunAction(instance, "restart");
+  const stopDisabled = controlsBlocked || !canRunAction(instance, "stop");
+  const resetDisabled = controlsBlocked || !canRunAction(instance, "reset");
   const redirectDisabled = !requiresInstance || !isWebChallenge || !instanceUrl || status !== "started" || isIntermediate;
   const downloadDisabled = !challenge.file_url;
 
-  const duration = instance?.lease ?? null;
-  const elapsed = instance?.elapsed ?? elapsedSecondsSince(instance?.updated_at, now, duration);
-  const progressPercent = useMemo(() => {
-    if (!elapsed || !duration || duration <= 0) return 0;
-    return Math.min(100, Math.max(0, (elapsed / duration) * 100));
-  }, [duration, elapsed]);
+  const duration = instance?.lease_seconds ?? null;
+  const timer = useMemo(() => calculateInstanceTimer(instance, now), [instance, now]);
 
   const hostname = !requiresInstance ? "Unavailable" : instance?.host || "No instance";
   const port = !requiresInstance ? "—" : instance?.port ? String(instance.port) : "—";
@@ -255,10 +303,10 @@ export default function InstanceDeck({
 
       <div className="instance-progress">
         <div className="instance-progress-bar" aria-hidden="true">
-          <span style={{ width: `${progressPercent}%` }} />
+          <span style={{ width: `${timer.progressPercent}%` }} />
         </div>
         <div className="instance-progress-times">
-          <span>{formatClock(instance?.status ?? null, elapsed)}</span>
+          <span>{formatClock(instance?.status ?? null, timer.elapsedSeconds)}</span>
           <span>{formatClock(instance?.status ?? null, duration)}</span>
         </div>
       </div>
@@ -270,7 +318,7 @@ export default function InstanceDeck({
         <button type="button" aria-label="Restart instance" disabled={restartDisabled} onClick={() => runAction("restart")}>
           <RotateCcw size={31} />
         </button>
-        <button className="instance-main-control" type="button" aria-label="Start or pause instance" disabled={mainDisabled || (mainAction === "pause" && !canPause(instance))} onClick={() => runAction(mainAction)}>
+        <button className="instance-main-control" type="button" aria-label="Start, pause, or resume instance" disabled={mainDisabled} onClick={() => runAction(mainAction)}>
           {mainButtonIcon}
         </button>
         <button type="button" aria-label="Stop instance" disabled={stopDisabled} onClick={() => runAction("stop")}>
@@ -280,13 +328,6 @@ export default function InstanceDeck({
           <RefreshCw size={28} />
         </button>
       </div>
-
-      {/* {isShared ? (
-        <p className="instance-helper-note">This is a shared instance. Private lifecycle controls are disabled.</p>
-      ) : null}
-      {!requiresInstance ? (
-        <p className="instance-helper-note">This challenge does not require an instance.</p>
-      ) : null} */}
 
       {cycleOpen ? (
         <div className="instance-modal-backdrop" role="presentation" onClick={() => setCycleOpen(false)}>
@@ -312,13 +353,13 @@ export default function InstanceDeck({
             ) : null}
             {runningInstancesQuery.data && runningInstancesQuery.data.length > 0 ? (
               <div className="instance-modal-list">
-                {runningInstancesQuery.data.filter((e) => e.type == "private").map((entry) => (
+                {runningInstancesQuery.data.map((entry) => (
                   <div className="instance-modal-row" key={`${entry.sid}:${entry.cid}`}>
                     <div>
                       <strong>{getChallengeTitle(challenges, entry.cid)}</strong>
                       <span>{entry.host || "No host"}{entry.port ? `:${entry.port}` : ""}</span>
                     </div>
-                    <em>{entry.status ?? "unknown"}</em>
+                    <em>{entry.status}</em>
                   </div>
                 ))}
               </div>
