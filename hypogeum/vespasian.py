@@ -355,8 +355,8 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
     Create the database function responsible for validating and beginning
     challenge-instance lifecycle transitions.
 
-    The function returns JSONB for both successful operations and expected
-    validation failures. Unexpected database errors still propagate normally.
+    The function returns command acknowledgements for successful operations and
+    structured validation failures. Unexpected database errors still propagate.
     """
     function_name = env(
         "POSTGRESQL_CONTROL_INSTANCE_FUNCTION",
@@ -378,21 +378,21 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
         SECURITY INVOKER
         AS $function$
         DECLARE
-            v_action TEXT; v_requested_type TEXT; v_existing_type TEXT;
+            v_action TEXT;
+            v_requested_type TEXT;
             v_lock_key TEXT;
 
             v_allowed_transitions JSONB := {allowed_transitions}::JSONB;
             v_intermediate_status TEXT;
 
-            v_requires_instance BOOLEAN; v_instance_exists BOOLEAN := FALSE;
+            v_requires_instance BOOLEAN;
+            v_instance_exists BOOLEAN := FALSE;
             v_active_instances BIGINT := 0;
             v_rows_updated BIGINT := 0;
 
             v_owner_pid UUID;
             v_status TEXT;
             v_previous_status TEXT;
-            v_created_at TIMESTAMP WITH TIME ZONE;
-            v_updated_at TIMESTAMP WITH TIME ZONE;
         BEGIN
             /* Normalize and validate the caller-supplied values */
             v_action := LOWER(BTRIM(COALESCE(p_action, '')));
@@ -443,8 +443,10 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
             PERFORM pg_advisory_xact_lock(hashtextextended(v_lock_key, 0));
 
             /* Lock challenge row to prevent mutations while transacting */
-            SELECT c.requires_instance INTO v_requires_instance FROM {challenges_table} AS c
-            WHERE c.sid = p_sid AND c.cid = p_cid FOR SHARE;
+            SELECT c.requires_instance INTO v_requires_instance
+            FROM {challenges_table} AS c
+            WHERE c.sid = p_sid AND c.cid = p_cid
+            FOR SHARE;
 
             IF NOT FOUND THEN
                 RETURN jsonb_build_object(
@@ -466,8 +468,8 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
              * A shared instance is controlled by type and challenge; its actual
              * owner PID is loaded from the selected row.
              */
-            SELECT i.pid, i.status, i.type, i.created_at, i.updated_at
-            INTO v_owner_pid, v_status, v_existing_type, v_created_at, v_updated_at
+            SELECT i.pid, i.status
+            INTO v_owner_pid, v_status
             FROM {instances_table} AS i
             WHERE i.sid = p_sid AND i.cid = p_cid
             AND (
@@ -492,9 +494,12 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 END IF;
 
                 IF v_requested_type = 'private' THEN
-                    SELECT COUNT(*) INTO v_active_instances FROM {instances_table} AS i
-                    WHERE i.sid = p_sid AND i.pid = p_pid AND i.type = 'private'
-                    AND i.status NOT IN ('stopped', 'failed');
+                    SELECT COUNT(*) INTO v_active_instances
+                    FROM {instances_table} AS i
+                    WHERE i.sid = p_sid
+                      AND i.pid = p_pid
+                      AND i.type = 'private'
+                      AND i.status NOT IN ('stopped', 'failed');
 
                     IF v_active_instances >= 3 THEN
                         RETURN jsonb_build_object(
@@ -508,8 +513,8 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 BEGIN
                     INSERT INTO {instances_table} (sid, cid, pid, type)
                     VALUES (p_sid, p_cid, p_pid, v_requested_type)
-                    RETURNING pid, status, type, created_at, updated_at
-                    INTO v_owner_pid, v_status, v_existing_type, v_created_at, v_updated_at;
+                    RETURNING pid, status
+                    INTO v_owner_pid, v_status;
 
                     EXCEPTION
                         WHEN unique_violation THEN
@@ -518,22 +523,14 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                                 'message', 'The instance was created by another operation.',
                                 'status_code', 409
                             );
-                    END;
+                END;
 
-                    RETURN jsonb_build_object(
-                        'success', TRUE,
-                        'message', 'Instance is starting',
-                        'status_code', 200,
-                        'instance', jsonb_build_object(
-                            'sid', p_sid,
-                            'cid', p_cid,
-                            'pid', v_owner_pid,
-                            'type', v_existing_type,
-                            'status', v_status,
-                            'created_at', v_created_at,
-                            'updated_at', v_updated_at
-                        )
-                    );
+                RETURN jsonb_build_object(
+                    'success', TRUE,
+                    'message', 'Instance is starting',
+                    'action', v_action,
+                    'status_code', 200
+                );
             END IF;
 
             /* Existing-instance validation. */
@@ -567,10 +564,13 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 );
             END IF;
 
-            /* Starting an existing stopped private instance consumes a quota slot */
+            /* Starting an existing stopped private instance consumes a quota slot. */
             IF v_requested_type = 'private' AND v_action = 'start' THEN
-                SELECT COUNT(*) INTO v_active_instances FROM {instances_table} AS i
-                WHERE i.sid = p_sid AND i.pid = p_pid AND i.type = 'private'
+                SELECT COUNT(*) INTO v_active_instances
+                FROM {instances_table} AS i
+                WHERE i.sid = p_sid
+                  AND i.pid = p_pid
+                  AND i.type = 'private'
                   AND i.status NOT IN ('stopped', 'failed');
 
                 IF v_active_instances >= 3 THEN
@@ -582,41 +582,20 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 END IF;
             END IF;
 
-            /* Preserve the current reset behavior: resetting does not advance
-             * updated_at and therefore does not renew the lease.
-             */
-            PERFORM set_config(
-                'session.bypass_trigger',
-                CASE WHEN v_intermediate_status = 'resetting' THEN 'true' ELSE 'false' END,
-                TRUE
-            );
-
             /*
              * The previous status remains in the WHERE clause. This prevents
              * the function from overwriting a state changed by another writer.
              */
-            UPDATE {instances_table} AS i SET status = v_intermediate_status
+            UPDATE {instances_table} AS i
+            SET status = v_intermediate_status
             WHERE i.sid = p_sid
               AND i.cid = p_cid
               AND i.pid = v_owner_pid
               AND i.type = v_requested_type
               AND i.status = v_previous_status
-            RETURNING
-                i.status,
-                i.created_at,
-                i.updated_at
-            INTO
-                v_status,
-                v_created_at,
-                v_updated_at;
+            RETURNING i.status INTO v_status;
 
             GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
-
-            /*
-             * Do not allow the trigger bypass setting to leak into another
-             * statement in the caller's transaction.
-             */
-            PERFORM set_config('session.bypass_trigger', 'false', TRUE);
 
             IF v_rows_updated = 0 THEN
                 RETURN jsonb_build_object(
@@ -629,16 +608,8 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
             RETURN jsonb_build_object(
                 'success', TRUE,
                 'message', FORMAT('Instance is %s', v_status),
-                'status_code', 200,
-                'instance', jsonb_build_object(
-                    'sid', p_sid,
-                    'cid', p_cid,
-                    'pid', v_owner_pid,
-                    'type', v_requested_type,
-                    'status', v_status,
-                    'created_at', v_created_at,
-                    'updated_at', v_updated_at
-                )
+                'action', v_action,
+                'status_code', 200
             );
         END;
         $function$;
