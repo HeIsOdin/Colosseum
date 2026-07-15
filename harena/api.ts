@@ -116,27 +116,36 @@ export type InstanceStatus = z.infer<typeof InstanceStatusSchema>;
 export const InstanceTypeSchema = z.enum(["private", "shared"]);
 export type InstanceType = z.infer<typeof InstanceTypeSchema>;
 
+export const InstanceActionSchema = z.enum([
+  "start",
+  "pause",
+  "resume",
+  "stop",
+  "restart",
+  "reset",
+]);
+
+export type InstanceAction = z.infer<typeof InstanceActionSchema>;
+
 export const InstanceSchema = z.object({
-  host: z.string().nullable().optional(),
-  port: z.coerce.number().nullable().optional(),
-  type: InstanceTypeSchema.nullable().optional(),
-  status: InstanceStatusSchema.nullable().optional(),
-  elapsed: z.coerce.number().nullable().optional(),
-  created_at: z.string().nullable().optional(),
-  updated_at: z.string().nullable().optional(),
-  can_pause: z.boolean().default(false),
-  lease: z.coerce.number().nullable().optional(),
+  sid: z.coerce.number(),
+  cid: z.coerce.number(),
+  host: z.string().nullable(),
+  port: z.coerce.number().nullable(),
+  type: InstanceTypeSchema,
+  status: InstanceStatusSchema,
+  created_at: z.string(),
+  started_at: z.string().nullable(),
+  paused_at: z.string().nullable(),
+  expires_at: z.string().nullable(),
+  updated_at: z.string(),
+  lease_seconds: z.coerce.number().positive(),
+  allowed_actions: z.array(InstanceActionSchema).default([]),
 });
 
 export type Instance = z.infer<typeof InstanceSchema>;
-
-export const RunningInstanceSchema = InstanceSchema.extend({
-  sid: z.number(),
-  cid: z.number(),
-});
-
-export type RunningInstance = z.infer<typeof RunningInstanceSchema>;
-export type InstanceAction = "start" | "pause" | "resume" | "stop" | "restart" | "reset";
+export const RunningInstanceSchema = InstanceSchema;
+export type RunningInstance = Instance;
 
 export const ChallengeSchema = z.object({
   cid: z.number(),
@@ -289,7 +298,11 @@ export const api = {
     });
   },
 
-  async controlInstance(sid: number, cid: number, action: InstanceAction): Promise<{ success: boolean; message: string }> {
+  async controlInstance(
+    sid: number,
+    cid: number,
+    action: InstanceAction,
+  ): Promise<{ success: boolean; message: string; action?: InstanceAction }> {
     return request(`/series/${sid}/challenges/${cid}`, {
       method: "PATCH",
       body: JSON.stringify({ action }),
