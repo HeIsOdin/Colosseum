@@ -10,9 +10,7 @@ This means that if you had stopped or restarted an instance, you will update cha
 Hence, you cannot pause that instance anymore. You can only stop it or restart it.
 """
 
-from itsdangerous import exc
-
-from . import INSTANCE_STATES, ALLOWED_TRANSITIONS
+from . import WORKER_TRANSITIONS
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from hypogeum.armamentarium import env, db_connect, as_uuid
@@ -250,127 +248,214 @@ def control_challenge_instance(sid: int, cid: int):
 
 # --- Mock Service for Testing Purposes ---
 
-def _mock_service(sid: int, cid: int, pid: uuid.UUID) -> None:
-    """
-    Mock service to simulate instance control actions.
-    In a real-world scenario, this function would interact with the actual instance management service.
-    """
-    logger = logging.getLogger(__name__)
-    logger.warning(f"Mock service called for Series ID {sid}, Challenge ID {cid}, Player ID {pid}.")
-    try:
-        instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
-        query = sql.SQL("""
-            DO $$
-            DECLARE
-                current_status TEXT;
-                host TEXT;
-                port TEXT;
-                created_at TIMESTAMP;
-            BEGIN
-                SELECT status, host, port, created_at
-                INTO current_status, host, port, created_at
-                FROM {instances_table}
-                WHERE sid = %s AND cid = %s AND pid = %s
-        """).format(instances_table=instances_table)
-        with db_connect() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, (sid, cid, pid))
-                res = cursor.fetchone()
-                if not res:
-                    logger.error(f"No instance found for Series {sid}, Challenge {cid}, Player {pid}.")
-                    return
-                current_status, host, port, created_at = res
-                if current_status is None:
-                    raise Exception("Instance status is None, cannot perform mock action.")
-                
-                columns_and_values: dict[str, str | None] = {}
-                bypass_trigger = 'false'
-                if current_status == "starting":
-                    bypass_trigger = 'true'
-                    columns_and_values["status"] = "started"
-                    host = "localhost"  if host is None else host  # Mock host
-                    port = "8080" if port is None else port  # Mock port
-                    columns_and_values["host"] = host  # Mock host
-                    columns_and_values["port"] = port  # Mock port
-                elif current_status == "pausing":
-                    columns_and_values["status"] = "paused"
-                    bypass_trigger = 'true'
-                elif current_status == "resuming":
-                    columns_and_values["status"] = "started"
-                    bypass_trigger = 'true'
-                elif current_status == "stopping":
-                    columns_and_values["status"] = "stopped"
-                    columns_and_values["host"] = None
-                    columns_and_values["port"] = None
-                elif current_status == "restarting":
-                    columns_and_values["status"] = "started"
-                    host, port = "oluwajuwon.dev", "8081" # Mock values for host and port
-                    columns_and_values["host"] = host
-                    columns_and_values["port"] = port
-                    # Reset updated_at for restart
-                    #columns_and_values["updated_at"] = f"array_append(updated_at, {created_at})" 
-                elif current_status == "resetting":
-                    # NOTE: Resetting the instance should not renew the lease
-                    columns_and_values["status"] = "started"
-                    bypass_trigger = 'true'
-                query = sql.SQL("""
-                    SET LOCAL session.bypass_trigger = %s;
-                    UPDATE {instances_table} SET {columns_and_values}
-                    WHERE sid = %s AND cid = %s AND pid = %s
-                """).format(
-                    instances_table=sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0]),
-                    columns_and_values=sql.SQL(', ').join(
-                        sql.SQL("{} = %s").format(sql.Identifier(col))
-                        for col in columns_and_values.keys()
-                    )
-                )
-                cursor.execute(query, [bypass_trigger, *columns_and_values.values(), sid, cid, pid])
-    except Exception as e:
-        logger.exception(f"Error in mock service for {sid}:{cid}:{pid}: {e}")
+# def ensure_instance_claim_schema(cursor, instances_table: str) -> None:
+#     """Ensure the instance table has the columns required for worker claims."""
+#     table = sql.Identifier(instances_table)
+#     index_name = sql.Identifier(f"{instances_table}_claimable_idx")
+
+#     cursor.execute(
+#         sql.SQL("""
+#             ALTER TABLE {table}
+#                 ADD COLUMN IF NOT EXISTS claim_id UUID,
+#                 ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP WITH TIME ZONE;
+
+#             CREATE INDEX IF NOT EXISTS {index_name}
+#             ON {table} (updated_at)
+#             WHERE claim_id IS NULL
+#               AND status IN (
+#                   'starting', 'pausing', 'resuming',
+#                   'stopping', 'restarting', 'resetting'
+#               );
+#         """).format(
+#             table=table,
+#             index_name=index_name,
+#         )
+#     )
+
+def claim_next_instance() -> dict | None:
+    """Claim one intermediate instance without waiting on rows claimed elsewhere."""
+    table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    claim_id = uuid.uuid4()
+    intermediate_states = tuple(WORKER_TRANSITIONS.keys())
+
+    query = sql.SQL("""
+        WITH candidate AS (
+            SELECT sid, cid, pid FROM {table} WHERE status = ANY(%s) AND claim_id IS NULL
+            ORDER BY updated_at ASC
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        UPDATE {table} AS i SET claim_id = %s, claimed_at = CURRENT_TIMESTAMP FROM candidate
+        WHERE i.sid = candidate.sid AND i.cid = candidate.cid AND i.pid = candidate.pid
+        RETURNING
+            i.sid, i.cid, i.pid, i.type, i.status,
+            i.host, i.port,
+            i.started_at, i.paused_at, i.expires_at,
+            i.claim_id, i.claimed_at;
+    """).format(table=sql.Identifier(table_name))
+
+    with db_connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (list(intermediate_states), claim_id))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+
+            columns = [description[0] for description in cursor.description] if cursor.description else []
+            return dict(zip(columns, row))
 
 
-async def main():
-    logger = logging.getLogger(__name__)
-    instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
-    intermediate_states = [state for state in INSTANCE_STATES if state.endswith("ing")]
-    intermediate_query = sql.SQL("""
-        SELECT sid, cid, pid FROM {instances_table}
-        WHERE status = ANY(%s)
-    """).format(instances_table=instances_table)
-    lease_duration = int(env('INSTANCE_LEASE', '1800')[0])
-    expiry_query = sql.SQL("""
-        SET LOCAL session.bypass_trigger = 'true';
-        UPDATE {instances_table} SET status = 'stopping'
-        WHERE status = 'started' AND
-        updated_at[array_upper(updated_at, 1)] + INTERVAL {lease} < NOW()
-    """).format(
-        lease=sql.Literal(f"{lease_duration} seconds"),
-        instances_table=instances_table
+def mock_docker_operation(instance: dict) -> dict:
+    """Return the infrastructure values produced by a mocked Docker operation."""
+    status = instance['status']
+
+    if status not in WORKER_TRANSITIONS:
+        raise ValueError(f"Unsupported intermediate instance state: {status}")
+
+    host = instance.get('host')
+    port = instance.get('port')
+
+    if status == 'starting':
+        host = host or 'localhost'
+        port = port or 8080
+    elif status == 'stopping':
+        host = None
+        port = None
+    elif status == 'restarting':
+        host = 'localhost'
+        port = 8081
+
+    return {
+        'final_status': WORKER_TRANSITIONS[status],
+        'host': host,
+        'port': port,
+    }
+
+
+def finalize_instance(instance: dict, docker_result: dict) -> bool:
+    """Apply a successful Docker result only while the caller still owns the claim."""
+    table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    lease_seconds = int(env('INSTANCE_LEASE', '1800')[0])
+    intermediate_status = instance['status']
+
+    query = sql.SQL("""
+        UPDATE {table}
+        SET status = %s, host = %s, port = %s,
+        started_at = CASE
+            WHEN %s IN ('starting', 'restarting') THEN CURRENT_TIMESTAMP
+            ELSE started_at
+        END,
+        paused_at = CASE
+            WHEN %s = 'pausing' THEN CURRENT_TIMESTAMP
+            WHEN %s IN ('starting', 'resuming', 'stopping', 'restarting') THEN NULL
+            ELSE paused_at
+        END,
+        expires_at = CASE
+            WHEN %s IN ('starting', 'restarting')
+                THEN CURRENT_TIMESTAMP + (%s * INTERVAL '1 second')
+            WHEN %s = 'resuming' AND paused_at IS NOT NULL AND expires_at IS NOT NULL
+                THEN expires_at + (CURRENT_TIMESTAMP - paused_at)
+            WHEN %s = 'stopping' THEN NULL
+            ELSE expires_at
+        END,
+        claim_id = NULL, claimed_at = NULL
+        WHERE sid = %s AND cid = %s AND pid = %s AND status = %s AND claim_id = %s
+        RETURNING sid;
+    """).format(table=sql.Identifier(table_name))
+
+    params = (
+        docker_result['final_status'],
+        docker_result.get('host'), docker_result.get('port'),
+        intermediate_status, intermediate_status, intermediate_status, intermediate_status,
+        lease_seconds,
+        intermediate_status, intermediate_status,
+        instance['sid'], instance['cid'], instance['pid'], intermediate_status, instance['claim_id'],
     )
-    
+
+    with db_connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+            return cursor.fetchone() is not None
+
+
+def fail_instance(instance: dict) -> bool:
+    """Fail an operation once and clear the claim without retrying it."""
+    table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    query = sql.SQL("""
+        UPDATE {table} SET status = 'failed', claim_id = NULL, claimed_at = NULL
+        WHERE sid = %s AND cid = %s AND pid = %s AND status = %s AND claim_id = %s
+        RETURNING sid;
+    """).format(table=sql.Identifier(table_name))
+
+    with db_connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (
+                instance['sid'], instance['cid'], instance['pid'],
+                instance['status'], instance['claim_id'],
+            ))
+            return cursor.fetchone() is not None
+
+
+def fail_stale_claims() -> int:
+    """Mark abandoned intermediate operations failed and release their claims."""
+    table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    timeout_seconds = int(env('INSTANCE_CLAIM_TIMEOUT', '300')[0])
+    query = sql.SQL("""
+        UPDATE {table}
+        SET status = 'failed', claim_id = NULL, claimed_at = NULL
+        WHERE claim_id IS NOT NULL
+        AND claimed_at < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second') AND status = ANY(%s);
+    """).format(table=sql.Identifier(table_name))
+
+    with db_connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (timeout_seconds, list(WORKER_TRANSITIONS.keys())))
+            return cursor.rowcount
+
+
+def process_one_instance() -> bool:
+    """Claim and process at most one lifecycle operation."""
+    logger = logging.getLogger(__name__)
+    instance = claim_next_instance()
+    if instance is None:
+        return False
+
     try:
-        with db_connect() as conn:
-            with conn.cursor() as cursor:
-                while True:
-                    cursor.execute(expiry_query)
+        docker_result = mock_docker_operation(instance)
+        if not finalize_instance(instance, docker_result):
+            logger.warning('Instance claim was no longer current for %s:%s:%s',
+                instance['sid'], instance['cid'], instance['pid'],
+            )
+            return False
+        return True
+    except Exception:
+        logger.exception('Instance operation failed for %s:%s:%s',
+            instance['sid'], instance['cid'], instance['pid'],
+        )
+        fail_instance(instance)
+        return False
 
-                    cursor.execute(intermediate_query, (intermediate_states,))
-                    instances = cursor.fetchall()
-                    
-                    for sid, cid, pid in instances: _mock_service(sid, cid, pid)
-                    
-                    conn.commit()
 
-                    # NOTE: Don't be like me and DDoS your database
-                    await asyncio.sleep(5)
-                    
-    except asyncio.CancelledError:
-        print("\nShutdown signal received. Breaking loop.")
-        raise
-    except Exception as e:
-        logger.exception(f"Error handling intermediate instances: {e}")
+async def main() -> None:
+    logger = logging.getLogger(__name__)
+    poll_seconds = float(env('INSTANCE_WORKER_POLL_SECONDS', '5')[0])
 
-if __name__ == "__main__":
+    while True:
+        try:
+            stale_count = fail_stale_claims()
+            if stale_count:
+                logger.warning('Failed and released %s stale instance claim(s).', stale_count)
+
+            process_one_instance()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Instance worker cycle failed.')
+
+        await asyncio.sleep(poll_seconds)
+
+
+if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

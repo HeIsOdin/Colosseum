@@ -239,6 +239,8 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
+                claim_id UUID UNIQUE,
+                claimed_at TIMESTAMP WITH TIME ZONE,
                 sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 cid BIGINT,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
@@ -661,6 +663,7 @@ def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
     memberships_table = env('POSTGRESQL_MEMBERSHIPS_TABLE')[0]
     submissions_table = env('POSTGRESQL_SUBMISSIONS_TABLE')[0]
     solves_table = env('POSTGRESQL_SOLVES_TABLE')[0]
+    instances_table = env('POSTGRESQL_INSTANCES_TABLE')[0]
 
     cursor.execute(
         sql.SQL("""
@@ -672,11 +675,15 @@ def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
             CREATE INDEX IF NOT EXISTS idx_solves_pid ON {} (pid);
 
             CREATE INDEX IF NOT EXISTS idx_memberships_pid ON {} (pid);
+                
+            CREATE INDEX IF NOT EXISTS idx_instances_uat ON {} (updated_at) WHERE claim_id IS NULL
+            AND status IN ('starting', 'pausing', 'resuming', 'stopping', 'restarting', 'resetting');
         """).format(
             sql.Identifier(submissions_table),
             sql.Identifier(solves_table),
             sql.Identifier(solves_table),
-            sql.Identifier(memberships_table)
+            sql.Identifier(memberships_table),
+            sql.Identifier(instances_table)
         )
     )
 
