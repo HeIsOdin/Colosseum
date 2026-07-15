@@ -239,7 +239,7 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
     cursor.execute(
         sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
-                claim_id UUID UNIQUE,
+                claim_id UUID,
                 claimed_at TIMESTAMP WITH TIME ZONE,
                 sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 cid BIGINT,
