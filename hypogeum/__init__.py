@@ -55,4 +55,18 @@ WORKER_TRANSITIONS = {
     for transition in actions.values()
 }
 
+INSTANCE_COLUMNS = (
+    'sid',
+    'cid',
+    'host',
+    'port',
+    'type',
+    'status',
+    'created_at',
+    'started_at',
+    'paused_at',
+    'expires_at',
+    'updated_at',
+)
+
 INSTANCES_TYPES = ['private', 'shared']

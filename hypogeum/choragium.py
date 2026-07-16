@@ -1,6 +1,6 @@
 """Challenge-instance routes and the asynchronous lifecycle worker."""
 
-from . import INSTANCE_TRANSITIONS, WORKER_TRANSITIONS
+from . import INSTANCE_TRANSITIONS, WORKER_TRANSITIONS, INSTANCE_COLUMNS
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from hypogeum.armamentarium import env, db_connect, as_uuid
@@ -9,26 +9,11 @@ from hypogeum.vomitoria import locked_challenge_check
 import uuid
 import asyncio
 import logging
+import psycopg2
 import psycopg2.sql as sql
 
 
 choragium_bp = Blueprint('choragium', __name__, url_prefix='/series/<int:sid>')
-
-
-INSTANCE_COLUMNS = (
-    'sid',
-    'cid',
-    'host',
-    'port',
-    'type',
-    'status',
-    'created_at',
-    'started_at',
-    'paused_at',
-    'expires_at',
-    'updated_at',
-)
-
 
 def _serialize_instance(instance: dict) -> dict:
     """Add stable frontend metadata to an instance row."""
@@ -38,9 +23,10 @@ def _serialize_instance(instance: dict) -> dict:
     return instance
 
 
-def _rows_to_instances(cursor, rows: list[tuple]) -> list[dict]:
+def _rows_to_instances(cursor: psycopg2.extensions.cursor, rows: list[tuple]) -> list[dict]:
+    """Convert a list of database rows into a list of serialized instance dictionaries."""
     columns = [description[0] for description in cursor.description] if cursor.description else []
-    return [_serialize_instance(dict(zip(columns, row))) for row in rows]
+    return [_serialize_instance(dict(list(zip(columns, row)))) for row in rows]
 
 
 # --- Routes and their corresponding private functions ---
@@ -53,10 +39,8 @@ def _get_all_relevant_instances(sid: int, pid: uuid.UUID) -> list[dict]:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
         columns = sql.SQL(', ').join(sql.Identifier(column) for column in INSTANCE_COLUMNS)
         query = sql.SQL("""
-            SELECT {columns}
-            FROM {instances_table}
-            WHERE sid = %s
-              AND (pid = %s OR type = 'shared')
+            SELECT {columns} FROM {instances_table}
+            WHERE sid = %s AND (pid = %s OR type = 'shared')
             ORDER BY cid ASC, type ASC, created_at ASC
         """).format(columns=columns, instances_table=instances_table)
 
@@ -99,11 +83,8 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
         instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
         columns = sql.SQL(', ').join(sql.Identifier(column) for column in INSTANCE_COLUMNS)
         query = sql.SQL("""
-            SELECT {columns}
-            FROM {instances_table}
-            WHERE sid = %s
-              AND cid = %s
-              AND ((type = 'private' AND pid = %s) OR type = 'shared')
+            SELECT {columns} FROM {instances_table}
+            WHERE sid = %s AND cid = %s AND ((type = 'private' AND pid = %s) OR type = 'shared')
             ORDER BY CASE WHEN type = 'private' THEN 0 ELSE 1 END, created_at ASC
             LIMIT 1
         """).format(columns=columns, instances_table=instances_table)
@@ -139,14 +120,8 @@ def get_instance(sid: int, cid: int):
     return jsonify({'success': True, 'instance': instance}), 200
 
 
-def _control_instance(
-    sid: int,
-    cid: int,
-    pid: uuid.UUID,
-    action: str,
-    is_admin: bool = False,
-    instance_type: str = 'private',
-) -> dict:
+def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin: bool = False,
+                    instance_type: str = 'private') -> dict:
     """Ask PostgreSQL to validate and queue an instance lifecycle command."""
     try:
         function_name = env(
