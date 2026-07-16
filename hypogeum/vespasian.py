@@ -630,7 +630,7 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
     cursor.execute(query)
 
 def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
-    # Create indexes for the tables to improve query performance
+    # Create indexes for the tables to improve query performance and enforce invariants.
     memberships_table = env('POSTGRESQL_MEMBERSHIPS_TABLE')[0]
     submissions_table = env('POSTGRESQL_SUBMISSIONS_TABLE')[0]
     solves_table = env('POSTGRESQL_SOLVES_TABLE')[0]
@@ -646,6 +646,10 @@ def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
             CREATE INDEX IF NOT EXISTS idx_solves_pid ON {} (pid);
 
             CREATE INDEX IF NOT EXISTS idx_memberships_pid ON {} (pid);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_instances_one_shared_per_challenge
+            ON {} (sid, cid)
+            WHERE type = 'shared';
                 
             CREATE INDEX IF NOT EXISTS idx_instances_uat ON {} (updated_at) WHERE claim_id IS NULL
             AND status IN ('starting', 'pausing', 'resuming', 'stopping', 'restarting', 'resetting');
@@ -654,6 +658,7 @@ def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
             sql.Identifier(solves_table),
             sql.Identifier(solves_table),
             sql.Identifier(memberships_table),
+            sql.Identifier(instances_table),
             sql.Identifier(instances_table)
         )
     )
@@ -682,7 +687,7 @@ def bootstrap(SUPERDATABASE: str, SUPERUSER: str, SUPERPASSWORD: str, REDISPASSW
             _create_user_table(cursor)
             logger.debug(f"User table created successfully in database '{DATABASE}'.")
             _create_memberships_table(cursor)
-            logger.debug(f"Memberships table created successfully in database '{DATABASE}'.")
+            logger.debug(f"Membership table created successfully in database '{DATABASE}'.")
             _create_flag_submissions_table(cursor)
             logger.debug(f"Flag submissions table created successfully in database '{DATABASE}'.")
             _create_challenge_solves_table(cursor)
