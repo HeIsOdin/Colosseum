@@ -88,8 +88,8 @@ def _integration_test() -> tuple[dict, bool, str, int]:
         return {"checklist": checklist, "checks": checks}, False, "Internal Server Error", 500
 
 @sanitarium_bp.get('/integration-test')
-#@login_required
-#@admin_required
+@login_required
+@admin_required
 def integration_test():
     """
     Perform an integration test to check the health of the Sanitarium service.

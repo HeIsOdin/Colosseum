@@ -1,7 +1,7 @@
 from . import login_manager, REDIS_CLIENT
 from flask import Blueprint, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user, UserMixin
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import env, db_connect, as_uuid
@@ -17,17 +17,19 @@ import psycopg2.sql as sql
 vomitoria_bp = Blueprint('vomitoria', __name__, url_prefix='/auth')
 
 class User(UserMixin):
-    def __init__(self, pid: uuid.UUID, sids: list | None = None, is_admin: bool = False):
+    def __init__(self, pid: uuid.UUID, sids: list | None = None, is_admin: bool = False,
+                 display_name: str = "Anonymous", avatar: str = "default"):
         self.id = pid
         self.sids = sids or []
         self.is_admin = is_admin
+        self.display_name = display_name
+        self.avatar = avatar
 
 @login_manager.unauthorized_handler
 def unauthorized():
     return jsonify({
         "success": False,
         "message": "Authentication required",
-        "redirect": "/login"
     }), 401
 
 @login_manager.user_loader
@@ -44,7 +46,8 @@ def load_user(user_id: str) -> User | None:
         memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
 
         query = sql.SQL("""
-            SELECT u.pid, u.is_admin, COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
+            SELECT u.pid, u.is_admin, u.display_name, u.avatar, u.status,
+            COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
             FROM {users} u
             LEFT JOIN {memberships} m ON u.pid = m.pid
             WHERE u.pid = %s
@@ -62,7 +65,17 @@ def load_user(user_id: str) -> User | None:
         if row is None:
             return None
 
-        return User(pid=row[0], is_admin=bool(row[1]), sids=list(row[2] or []))
+        pid, is_admin, display_name, avatar, status, sids = row
+        if status not in ["active", "verified"]:
+            logger.warning(f"User {user_id} has invalid status: {status}")
+            return None
+        return User(
+            pid=pid,
+            is_admin=bool(is_admin),
+            sids=list(sids or []),
+            display_name=display_name or "Anonymous",
+            avatar=avatar or "default",
+        )
 
     except Exception as e:
         logger.exception(f"Error loading user {user_id}: {e}")
@@ -145,39 +158,58 @@ def locked_challenge_check(f):
         try:
             pid = as_uuid(current_user.id)
 
+            series_table = env("POSTGRESQL_SERIES_TABLE")[0]
             memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
             challenges_table = env("POSTGRESQL_CHALLENGES_TABLE")[0]
             solves_table = env("POSTGRESQL_SOLVES_TABLE")[0]
 
+            series_query = sql.SQL("""
+                SELECT starts_at, ends_at FROM {series} WHERE sid = %s
+            """).format(
+                series=sql.Identifier(series_table),
+            )
+
             membership_query = sql.SQL("""
-                SELECT 1
-                FROM {memberships}
-                WHERE sid = %s AND pid = %s
-                LIMIT 1
+                SELECT * FROM {memberships} WHERE sid = %s AND pid = %s
             """).format(
                 memberships=sql.Identifier(memberships_table),
             )
 
             challenge_query = sql.SQL("""
-                SELECT prerequisite
-                FROM {challenges}
-                WHERE sid = %s AND cid = %s
-                LIMIT 1
+                SELECT prerequisite FROM {challenges} WHERE sid = %s AND cid = %s
             """).format(
                 challenges=sql.Identifier(challenges_table),
             )
 
             prerequisite_solve_query = sql.SQL("""
-                SELECT 1
-                FROM {solves}
-                WHERE sid = %s AND cid = %s AND pid = %s
-                LIMIT 1
+                SELECT solved_at FROM {solves} WHERE sid = %s AND cid = %s AND pid = %s
             """).format(
                 solves=sql.Identifier(solves_table),
             )
 
             with db_connect() as conn:
                 with conn.cursor() as cursor:
+                    cursor.execute(series_query, (sid,))
+                    series_row = cursor.fetchone()
+                    if series_row is None:
+                        return jsonify({
+                            "success": False,
+                            "message": "Series not found."
+                        }), 404
+                    
+                    series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    series_data = dict(zip(series_columns, series_row))
+                    current_date = datetime.now(timezone.utc)
+                    if series_data.get('starts_at') is None or series_data['starts_at'] > current_date:
+                        return jsonify({
+                            "success": False,
+                            "message": "Series has not started yet."
+                        }), 403
+                    if series_data.get('ends_at') is not None and series_data['ends_at'] < current_date:
+                        return jsonify({
+                            "success": False,
+                            "message": "Series has already ended."
+                        }), 403
                     cursor.execute(membership_query, (sid, pid))
                     if cursor.fetchone() is None:
                         return jsonify({
@@ -256,7 +288,9 @@ def flag_hash(flag: str) -> str:
 
 # -- Authentication --
 
-def _identify(pid: uuid.UUID, sids: list[int], is_admin: bool) -> tuple[dict, bool, str, int]:
+def _identify(pid: uuid.UUID, sids: list[int], is_admin: bool,
+              display_name: str = "Anonymous", avatar: str = "default"
+            ) -> tuple[dict, bool, str, int]:
     """
     Identify the user based on their PID, series IDs, and admin status.
 
@@ -271,6 +305,8 @@ def _identify(pid: uuid.UUID, sids: list[int], is_admin: bool) -> tuple[dict, bo
         "pid": str(pid),
         "sids": sids,
         "is_admin": is_admin,
+        "display_name": display_name,
+        "avatar": avatar
     }, True, "", 200
 
 @vomitoria_bp.get('/')
@@ -279,8 +315,10 @@ def identify():
     pid = as_uuid(current_user.id)
     sids = current_user.sids
     is_admin = current_user.is_admin
+    display_name = getattr(current_user, "display_name", "Anonymous")
+    avatar = getattr(current_user, "avatar", "default")
 
-    details, success, message, status_code = _identify(pid, sids, is_admin)
+    details, success, message, status_code = _identify(pid, sids, is_admin, display_name, avatar)
 
     if not success:
         return jsonify({"success": False, "message": message}), status_code
@@ -298,7 +336,7 @@ def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
         memberships_table = env("POSTGRESQL_MEMBERSHIPS_TABLE")[0]
 
         query = sql.SQL("""
-            SELECT u.pid, u.password, u.is_admin, u.status,
+            SELECT u.pid, u.password, u.is_admin, u.status, u.display_name, u.avatar,
             COALESCE(array_agg(m.sid) FILTER (WHERE m.sid IS NOT NULL), ARRAY[]::INTEGER[]) AS sids
             FROM {users} u
             LEFT JOIN {memberships} m ON u.pid = m.pid
@@ -317,7 +355,7 @@ def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
         if row is None:
             return {}, False, "Invalid credentials", 401
 
-        pid, password_hash, is_admin, status, sids = row
+        pid, password_hash, is_admin, status, display_name, avatar, sids = row
 
         if password_hash is None:
             return {}, False, "Invalid credentials", 401
@@ -332,6 +370,8 @@ def _login(email: str, password: str) -> tuple[dict, bool, str, int]:
             "pid": str(pid),
             "sids": list(sids or []),
             "is_admin": bool(is_admin),
+            "display_name": display_name or "Anonymous",
+            "avatar": avatar or "default"
         }, True, "", 200
 
     except ValueError as ve:
@@ -365,7 +405,7 @@ def login():
     )
     login_user(user, remember=True, duration=timedelta(days=1))
 
-    return jsonify({"success": True, "message": message, **details}), status_code
+    return jsonify({"success": True, "message": message, **details,}), status_code
 
 @vomitoria_bp.delete('/')
 @login_required

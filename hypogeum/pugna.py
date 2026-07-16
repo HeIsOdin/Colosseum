@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
 from hypogeum.armamentarium import (
-    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges,
 )
 from hypogeum.vomitoria import (
     flag_hash, series_signup_required, admin_required, cooldown_check, locked_challenge_check
@@ -27,7 +27,11 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         required = {"title", "description", "author", "points", "category", "difficulty", "flag"}
         optional = {"prerequisite", "requires_instance", "file_url"}
         allowed = required | optional
@@ -36,7 +40,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
         if unknown:
             return "", False, f"Unsupported fields: {', '.join(sorted(unknown))}", 400
 
-        missing = [field for field in required if not challenge.get(field)]
+        missing = [field for field in required if not str(challenge.get(field))]
         if missing:
             return "", False, f"Missing required fields: {', '.join(missing)}", 400
 
@@ -84,6 +88,8 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
                 normalized_challenge.pop("file_url", None)
             elif len(file_url) > 2048:
                 return "", False, "file_url must not exceed 2048 characters.", 400
+            elif not file_url.startswith("https://"):
+                return "", False, "file_url must start with  or https://", 400
             else:
                 normalized_challenge["file_url"] = file_url
 
@@ -179,75 +185,6 @@ def delete_challenge(sid: int, cid: int):
     success, message, status_code = _delete_challenge(sid, cid)
     return jsonify({"success": success, "message": message}), status_code
 
-def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str) -> tuple[bool, str, int]:
-    """
-    Control the state of a challenge instance (start, stop, restart).
-    Note: There are two kinds of instances: the shared instance and the spawned instance.
-    This function controls spawned instances for individual users by calling the instance manager
-
-
-    Args:
-        - sid (int) : The ID of the series.
-        - cid (int) : The ID of the challenge.
-        - action (str) : The action to perform ('start', 'stop', 'restart').
-    
-    Returns:
-        tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
-    """
-
-    logger = logging.getLogger(__name__)
-    try:
-        challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid, cid)
-        require_instance_query = sql.SQL("SELECT requires_instance FROM {table} " \
-                                         "WHERE sid = %s AND cid = %s").format(
-                                            table=challenges_table
-                                        )
-        with db_connect() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(require_instance_query, (sid, cid))
-                res = cursor.fetchone()
-                if not res:
-                    return False, f"Challenge {cid} not found in Series {sid}.", 404
-                requires_instance = res[0]
-                if not requires_instance:
-                    return False, f"Challenge {cid} does not require an instance.", 400
-        action = action.lower()
-        if action == "start":
-            logger.info(f"Starting instance for Series {sid}, Challenge {cid} by Player {pid}.")
-            return True, "Instance started.", 200
-        elif action == "stop":
-            logger.info(f"Stopping instance for Series {sid}, Challenge {cid} by Player {pid}.")
-            return True, "Instance stopped.", 200
-        elif action == "restart":
-            logger.info(f"Restarting instance for Series {sid}, Challenge {cid} by Player {pid}.")
-            return True, "Instance restarted.", 200
-        else:
-            logger.warning(f"Invalid action '{action}' for Series {sid}, Challenge {cid}.")
-            return False, "Invalid action. Use 'start', 'stop', or 'restart'.", 400
-    except ValueError as ve:
-        logger.debug(f"Validation error in controlling challenge instance: {ve}")
-        return False, str(ve), 404
-    except Exception as e:
-        logger.exception(f"Error controlling challenge instance for Series ID {sid} and Challenge ID {cid}: {e}")
-        return False, "Internal server error", 500
-
-@pugna_bp.patch('/<int:cid>')
-@login_required
-@locked_challenge_check
-def control_challenge_instance(sid: int, cid: int):  
-    data = request.get_json(silent=True)
-    if data is None:
-        data = request.form.to_dict()
-    action = data.get("action")
-    if not action or not isinstance(action, str):
-        return jsonify({"success": False, "message": "Action is required."}), 400
-    action = action.strip().lower()
-    pid = as_uuid(current_user.id)
-    
-    success, message, status_code = _control_instance(sid, cid, pid, action)
-    return jsonify({"success": success, "message": message}), status_code
-
 def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, str, int]:
     """
     Submit a flag for a specific challenge in a series.
@@ -269,13 +206,9 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
 
         solve_insert_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
         solve_select_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
-        solve_columns = sql.SQL(', ').join(
-            sql.Identifier(col) for col in ['sid', 'cid', 'points']
-        )
         solve_query = sql.SQL("""
             WITH matched_challenge AS (
-                SELECT sid, cid, points, requires_instance
-                FROM {select_table}
+                SELECT sid, cid, points FROM {select_table}
                 WHERE sid = %s AND cid = %s AND flag = %s
             ),
             inserted_solve AS (
@@ -284,19 +217,16 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
                 FROM matched_challenge
                 RETURNING solved_at
             )
-            SELECT inserted_solve.solved_at, matched_challenge.requires_instance
-            FROM inserted_solve
-            JOIN matched_challenge ON TRUE
+            SELECT solved_at FROM inserted_solve
         """).format(
             insert_table=solve_insert_table,
             select_table=solve_select_table,
         )
         submit_table = sql.Identifier(env('POSTGRESQL_SUBMISSIONS_TABLE')[0])
 
-        insert_submission_query = sql.SQL("""INSERT INTO {submissions} (sid, cid, pid)
-                                          VALUES (%s, %s, %s)
-                                          RETURNING subid
-                                        """).format(submissions=submit_table)
+        insert_submission_query = sql.SQL("""
+            INSERT INTO {submissions} (sid, cid, pid) VALUES (%s, %s, %s) RETURNING subid
+        """).format(submissions=submit_table)
         
         with db_connect() as conn:
             with conn.cursor() as cursor:
@@ -309,11 +239,6 @@ def _submit_flag(sid: int, cid: int, pid: uuid.UUID, flag: str) -> tuple[bool, s
 
                 if not res:
                     return False, "Wrong Flag", 404
-
-                _solved_at, requires_instance = res
-
-                if requires_instance:
-                    _control_instance(sid, cid, pid, "stop")
 
                 return True, "Correct Flag", 200
     except ValueError as ve:
@@ -507,18 +432,6 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
         logger.exception(f"Challenge creation check failed: {e}")
         checks.append(False)
 
-    checklist.append("Challenge Control was successful.")
-    try:
-        if cid is None: raise ValueError("Challenge ID is None, cannot control instance.")
-        success, message, _ = _control_instance(sid, cid, pid, "start")
-        if success:
-            checks.append(True)
-        else:
-            logger.warning(f"Challenge control check failed: {message}")
-            checks.append(False)
-    except Exception as e:
-        logger.exception(f"Challenge control check failed: {e}")
-        checks.append(False)
     
     checklist.append("Flag Submission was successful.")
     try:

@@ -1,18 +1,19 @@
-from . import login_manager, REDIS_CLIENT
+from . import login_manager, REDIS_CLIENT, API_ROOT
 from flask import Flask
 from flask_session import Session
 from psycopg2 import extras
-from hypogeum.armamentarium import env, refresh_series_and_challenges
+from hypogeum.armamentarium import env, refresh_series_and_challenges, redis_connect
 from hypogeum.vomitoria import vomitoria_bp
 from hypogeum.auctoramentum import auctoramentum_bp
 from hypogeum.gladiator import gladiator_bp
 from hypogeum.sanitarium import sanitarium_bp
 from hypogeum.pugna import pugna_bp
+from hypogeum.choragium import choragium_bp
 
 def configure_app(app: Flask) -> None:
     app.config['SECRET_KEY'] = env('COLOSSEUM_SECRET_KEY')[0]
     app.config['SESSION_TYPE'] = 'redis'
-    app.config['SESSION_REDIS'] = REDIS_CLIENT
+    app.config['SESSION_REDIS'] = redis_connect(False)
     app.config['SESSION_KEY_PREFIX'] = env('REDIS_KEY_PREFIX')[0]
     app.config['SESSION_PERMANENT'] = False
     app.config['SESSION_USE_SIGNER'] = True
@@ -24,11 +25,18 @@ def configure_app(app: Flask) -> None:
     extras.register_uuid()  # Register UUID adapter for psycopg2
 
 def register_routes(app: Flask) -> None:
-    app.register_blueprint(vomitoria_bp)
-    app.register_blueprint(auctoramentum_bp)
-    app.register_blueprint(gladiator_bp)
-    app.register_blueprint(pugna_bp)
-    app.register_blueprint(sanitarium_bp)
+    url_prefix = f"{API_ROOT}/{vomitoria_bp.url_prefix}" if vomitoria_bp.url_prefix else API_ROOT
+    app.register_blueprint(vomitoria_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{auctoramentum_bp.url_prefix}" if auctoramentum_bp.url_prefix else API_ROOT
+    app.register_blueprint(auctoramentum_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{gladiator_bp.url_prefix}" if gladiator_bp.url_prefix else API_ROOT
+    app.register_blueprint(gladiator_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{pugna_bp.url_prefix}" if pugna_bp.url_prefix else API_ROOT
+    app.register_blueprint(pugna_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{sanitarium_bp.url_prefix}" if sanitarium_bp.url_prefix else API_ROOT
+    app.register_blueprint(sanitarium_bp, url_prefix=url_prefix)
+    url_prefix = f"{API_ROOT}/{choragium_bp.url_prefix}" if choragium_bp.url_prefix else API_ROOT
+    app.register_blueprint(choragium_bp, url_prefix=url_prefix)
 
 
 def create_app() -> Flask:
