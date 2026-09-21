@@ -4,10 +4,18 @@ from . import INSTANCE_TRANSITIONS, WORKER_TRANSITIONS, INSTANCE_COLUMNS
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from hypogeum.armamentarium import env, db_connect, as_uuid
+from hypogeum.instance_provider import (
+    DiscoveredInstance,
+    DockerInstanceProvider,
+    InstanceProvider,
+    MockInstanceProvider,
+    ProviderResult,
+)
 from hypogeum.vomitoria import locked_challenge_check
 
 import uuid
 import asyncio
+import json
 import logging
 import psycopg2
 import psycopg2.sql as sql
@@ -189,7 +197,7 @@ def control_challenge_instance(sid: int, cid: int):
     return jsonify(response), status_code
 
 
-# --- Mock Service for Testing Purposes ---
+# --- Infrastructure worker ---
 
 
 def queue_expired_instances() -> int:
@@ -221,21 +229,24 @@ def queue_expired_instances() -> int:
 
 def claim_next_instance() -> dict | None:
     """Claim one intermediate instance without waiting on rows claimed elsewhere."""
-    table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    instances_table = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    challenges_table = env('POSTGRESQL_CHALLENGES_TABLE')[0]
     claim_id = uuid.uuid4()
     intermediate_states = tuple(WORKER_TRANSITIONS.keys())
 
     query = sql.SQL("""
         WITH candidate AS (
-            SELECT sid, cid, pid
-            FROM {table}
-            WHERE status = ANY(%s)
-              AND claim_id IS NULL
-            ORDER BY updated_at ASC
+            SELECT instance.sid, instance.cid, instance.pid, challenge.instance_config
+            FROM {instances_table} AS instance
+            JOIN {challenges_table} AS challenge
+              ON challenge.sid = instance.sid AND challenge.cid = instance.cid
+            WHERE instance.status = ANY(%s)
+              AND instance.claim_id IS NULL
+            ORDER BY instance.updated_at ASC
             FOR UPDATE SKIP LOCKED
             LIMIT 1
         )
-        UPDATE {table} AS instance
+        UPDATE {instances_table} AS instance
         SET claim_id = %s,
             claimed_at = CURRENT_TIMESTAMP
         FROM candidate
@@ -248,14 +259,21 @@ def claim_next_instance() -> dict | None:
             instance.pid,
             instance.type,
             instance.status,
+            instance.provider,
+            instance.provider_instance_id,
+            instance.provider_metadata,
             instance.host,
             instance.port,
             instance.started_at,
             instance.paused_at,
             instance.expires_at,
             instance.claim_id,
-            instance.claimed_at;
-    """).format(table=sql.Identifier(table_name))
+            instance.claimed_at,
+            candidate.instance_config;
+    """).format(
+        instances_table=sql.Identifier(instances_table),
+        challenges_table=sql.Identifier(challenges_table),
+    )
 
     with db_connect() as conn:
         with conn.cursor() as cursor:
@@ -269,53 +287,53 @@ def claim_next_instance() -> dict | None:
 
 
 def mock_docker_operation(instance: dict) -> dict:
-    """Return the infrastructure values produced by a mocked Docker operation."""
-    status = instance['status']
-    if status not in WORKER_TRANSITIONS:
-        raise ValueError(f'Unsupported intermediate instance state: {status}')
-
-    host = instance.get('host')
-    port = instance.get('port')
-
-    if status == 'starting':
-        host = host or 'localhost'
-        port = port or 8080
-    elif status == 'stopping':
-        host = None
-        port = None
-    elif status == 'restarting':
-        host = 'localhost'
-        port = 8081
-
+    """Compatibility helper retained for database-only worker tests."""
+    result = MockInstanceProvider().apply(instance)
     return {
-        'final_status': WORKER_TRANSITIONS[status],
-        'host': host,
-        'port': port,
+        'final_status': result.final_status,
+        'host': result.host,
+        'port': result.port,
+        'provider_instance_id': result.provider_instance_id,
+        'provider_metadata': result.provider_metadata,
     }
 
 
-def finalize_instance(instance: dict, docker_result: dict) -> bool:
-    """Apply a successful Docker result only while the caller still owns the claim."""
+def finalize_instance(instance: dict, provider_result: ProviderResult | dict) -> bool:
+    """Apply a successful provider result only while the caller still owns the claim."""
     table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
     lease_seconds = int(env('INSTANCE_LEASE', '1800')[0])
     intermediate_status = instance['status']
+
+    if isinstance(provider_result, ProviderResult):
+        result = {
+            'final_status': provider_result.final_status,
+            'host': provider_result.host,
+            'port': provider_result.port,
+            'provider_instance_id': provider_result.provider_instance_id,
+            'provider_metadata': provider_result.provider_metadata,
+        }
+    else:
+        result = provider_result
 
     query = sql.SQL("""
         UPDATE {table}
         SET status = %s,
             host = %s,
             port = %s,
+            provider_instance_id = %s,
+            provider_metadata = %s::JSONB,
+            last_error = NULL,
             started_at = CASE
-                WHEN %s IN ('starting', 'restarting') THEN CURRENT_TIMESTAMP
+                WHEN %s IN ('starting', 'restarting', 'resetting') THEN CURRENT_TIMESTAMP
                 ELSE started_at
             END,
             paused_at = CASE
                 WHEN %s = 'pausing' THEN CURRENT_TIMESTAMP
-                WHEN %s IN ('starting', 'resuming', 'stopping', 'restarting') THEN NULL
+                WHEN %s IN ('starting', 'resuming', 'stopping', 'restarting', 'resetting') THEN NULL
                 ELSE paused_at
             END,
             expires_at = CASE
-                WHEN %s IN ('starting', 'restarting')
+                WHEN %s IN ('starting', 'restarting', 'resetting')
                     THEN CURRENT_TIMESTAMP + (%s * INTERVAL '1 second')
                 WHEN %s = 'resuming' AND paused_at IS NOT NULL AND expires_at IS NOT NULL
                     THEN expires_at + (CURRENT_TIMESTAMP - paused_at)
@@ -333,9 +351,11 @@ def finalize_instance(instance: dict, docker_result: dict) -> bool:
     """).format(table=sql.Identifier(table_name))
 
     params = (
-        docker_result['final_status'],
-        docker_result.get('host'),
-        docker_result.get('port'),
+        result['final_status'],
+        result.get('host'),
+        result.get('port'),
+        result.get('provider_instance_id'),
+        json.dumps(result.get('provider_metadata') or {}),
         intermediate_status,
         intermediate_status,
         intermediate_status,
@@ -356,12 +376,13 @@ def finalize_instance(instance: dict, docker_result: dict) -> bool:
             return cursor.fetchone() is not None
 
 
-def fail_instance(instance: dict) -> bool:
+def fail_instance(instance: dict, error: Exception | str | None = None) -> bool:
     """Fail an operation once and clear the claim without retrying it."""
     table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
     query = sql.SQL("""
         UPDATE {table}
         SET status = 'failed',
+            last_error = %s,
             claim_id = NULL,
             claimed_at = NULL
         WHERE sid = %s
@@ -377,6 +398,7 @@ def fail_instance(instance: dict) -> bool:
             cursor.execute(
                 query,
                 (
+                    str(error)[:4000] if error is not None else 'Instance provider operation failed.',
                     instance['sid'],
                     instance['cid'],
                     instance['pid'],
@@ -394,6 +416,7 @@ def fail_stale_claims() -> int:
     query = sql.SQL("""
         UPDATE {table}
         SET status = 'failed',
+            last_error = 'Instance worker claim timed out.',
             claim_id = NULL,
             claimed_at = NULL
         WHERE claim_id IS NOT NULL
@@ -407,7 +430,7 @@ def fail_stale_claims() -> int:
             return cursor.rowcount
 
 
-def process_one_instance() -> bool:
+def process_one_instance(provider: InstanceProvider) -> bool:
     """Claim and process at most one lifecycle operation."""
     logger = logging.getLogger(__name__)
     instance = claim_next_instance()
@@ -415,8 +438,10 @@ def process_one_instance() -> bool:
         return False
 
     try:
-        docker_result = mock_docker_operation(instance)
-        if not finalize_instance(instance, docker_result):
+        if instance['provider'] != provider.name:
+            raise ValueError(f"Unsupported instance provider: {instance['provider']}")
+        provider_result = provider.apply(instance)
+        if not finalize_instance(instance, provider_result):
             logger.warning(
                 'Instance claim was no longer current for %s:%s:%s',
                 instance['sid'],
@@ -425,39 +450,241 @@ def process_one_instance() -> bool:
             )
             return False
         return True
-    except Exception:
+    except Exception as exc:
         logger.exception(
             'Instance operation failed for %s:%s:%s',
             instance['sid'],
             instance['cid'],
             instance['pid'],
         )
-        fail_instance(instance)
+        fail_instance(instance, exc)
         return False
+
+
+def _update_reconciled_instance(
+    snapshot: dict,
+    target_status: str,
+    discovered: DiscoveredInstance | None,
+    error: str | None = None,
+) -> bool:
+    """Update one reconciled row while holding a short row lock."""
+    table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    lease_seconds = int(env('INSTANCE_LEASE', '1800')[0])
+    provider_instance_id = discovered.provider_instance_id if discovered else None
+    provider_metadata = discovered.provider_metadata if discovered else {}
+    host = discovered.host if discovered else None
+    port = discovered.port if discovered else None
+
+    select_query = sql.SQL("""
+        SELECT status FROM {table}
+        WHERE sid = %s AND cid = %s AND pid = %s
+        FOR UPDATE;
+    """).format(table=sql.Identifier(table_name))
+    update_query = sql.SQL("""
+        UPDATE {table}
+        SET status = %s,
+            host = %s,
+            port = %s,
+            provider_instance_id = %s,
+            provider_metadata = %s::JSONB,
+            last_error = %s,
+            started_at = CASE
+                WHEN %s = 'started' AND started_at IS NULL THEN CURRENT_TIMESTAMP
+                ELSE started_at
+            END,
+            paused_at = CASE
+                WHEN %s = 'paused' AND paused_at IS NULL THEN CURRENT_TIMESTAMP
+                WHEN %s IN ('started', 'stopped', 'failed') THEN NULL
+                ELSE paused_at
+            END,
+            expires_at = CASE
+                WHEN %s = 'started' AND expires_at IS NULL
+                    THEN CURRENT_TIMESTAMP + (%s * INTERVAL '1 second')
+                WHEN %s IN ('stopped', 'failed') THEN NULL
+                ELSE expires_at
+            END,
+            claim_id = NULL,
+            claimed_at = NULL
+        WHERE sid = %s AND cid = %s AND pid = %s;
+    """).format(table=sql.Identifier(table_name))
+
+    with db_connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(select_query, (snapshot['sid'], snapshot['cid'], snapshot['pid']))
+            row = cursor.fetchone()
+            if row is None or row[0] != snapshot['status']:
+                return False
+            cursor.execute(
+                update_query,
+                (
+                    target_status,
+                    host,
+                    port,
+                    provider_instance_id,
+                    json.dumps(provider_metadata),
+                    error,
+                    target_status,
+                    target_status,
+                    target_status,
+                    target_status,
+                    lease_seconds,
+                    target_status,
+                    snapshot['sid'],
+                    snapshot['cid'],
+                    snapshot['pid'],
+                ),
+            )
+            return cursor.rowcount == 1
+
+
+def _reconcile_target_status(snapshot: dict, discovered: DiscoveredInstance | None) -> str | None:
+    """Return the database state implied by the current provider state."""
+    database_status = snapshot['status']
+    if discovered is None:
+        if database_status == 'stopping':
+            return 'stopped'
+        if database_status == 'stopped' and snapshot.get('provider_instance_id'):
+            return 'stopped'
+        if database_status in {'started', 'paused'}:
+            return 'failed'
+        return None
+
+    runtime_status = discovered.runtime_status
+    if database_status == 'stopping':
+        return None
+    if runtime_status == 'paused':
+        if database_status in {'paused', 'pausing', 'started'}:
+            return 'paused'
+        return None
+    if runtime_status == 'running':
+        if database_status in {
+            'starting', 'started', 'paused', 'resuming', 'restarting', 'resetting'
+        }:
+            return 'started'
+        return None
+    if runtime_status in {'dead', 'exited', 'removing'}:
+        return 'failed'
+    return None
+
+
+def reconcile_instances(provider: InstanceProvider) -> dict[str, int]:
+    """Reconcile provider objects and database rows once at worker startup."""
+    logger = logging.getLogger(__name__)
+    table_name = env('POSTGRESQL_INSTANCES_TABLE')[0]
+    lock_name = 'colosseum:instance-reconcile'
+    counts = {'updated': 0, 'removed_orphans': 0, 'skipped': 0}
+
+    lock_conn = db_connect()
+    lock_conn.autocommit = True
+    acquired = False
+    try:
+        with lock_conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+                (lock_name,),
+            )
+            acquired = bool(cursor.fetchone()[0])
+            if not acquired:
+                counts['skipped'] = 1
+                return counts
+
+            cursor.execute(
+                sql.SQL("""
+                    SELECT sid, cid, pid, type, status, provider,
+                           provider_instance_id, provider_metadata, claim_id
+                    FROM {table}
+                    WHERE provider = %s;
+                """).format(table=sql.Identifier(table_name)),
+                (provider.name,),
+            )
+            columns = [description[0] for description in cursor.description] if cursor.description else []
+            snapshots = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        discovered_instances = provider.discover()
+        discovered_by_id = {
+            item.provider_instance_id: item for item in discovered_instances
+        }
+        discovered_by_key = {item.key: item for item in discovered_instances}
+        matched_provider_ids: set[str] = set()
+
+        for snapshot in snapshots:
+            key = (snapshot['sid'], snapshot['cid'], str(snapshot['pid']))
+            discovered = None
+            if snapshot['provider_instance_id']:
+                discovered = discovered_by_id.get(snapshot['provider_instance_id'])
+            if discovered is None:
+                discovered = discovered_by_key.get(key)
+            if discovered is not None:
+                matched_provider_ids.add(discovered.provider_instance_id)
+
+            if snapshot['status'] == 'stopped' and discovered is not None:
+                provider.remove(discovered.provider_instance_id)
+                discovered = None
+
+            target_status = _reconcile_target_status(snapshot, discovered)
+            if target_status is None:
+                continue
+            error = None
+            if target_status == 'failed':
+                error = 'Provider instance was missing or stopped during startup reconciliation.'
+            if _update_reconciled_instance(snapshot, target_status, discovered, error):
+                counts['updated'] += 1
+
+        for discovered in discovered_instances:
+            if discovered.provider_instance_id in matched_provider_ids:
+                continue
+            try:
+                provider.remove(discovered.provider_instance_id)
+                counts['removed_orphans'] += 1
+            except Exception:
+                logger.exception(
+                    'Failed to remove orphan provider instance %s',
+                    discovered.provider_instance_id,
+                )
+
+        return counts
+    finally:
+        if acquired:
+            try:
+                with lock_conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_advisory_unlock(hashtextextended(%s, 0))",
+                        (lock_name,),
+                    )
+            except Exception:
+                logger.exception('Failed to release instance reconciliation lock.')
+        lock_conn.close()
 
 
 async def main() -> None:
     """Poll for expired, abandoned, and newly queued instance operations."""
     logger = logging.getLogger(__name__)
     poll_seconds = float(env('INSTANCE_WORKER_POLL_SECONDS', '5')[0])
+    provider = DockerInstanceProvider()
 
-    while True:
-        try:
-            stale_count = fail_stale_claims()
-            if stale_count:
-                logger.warning('Failed and released %s stale instance claim(s).', stale_count)
+    try:
+        reconciliation = reconcile_instances(provider)
+        logger.info('Instance reconciliation completed: %s', reconciliation)
 
-            expired_count = queue_expired_instances()
-            if expired_count:
-                logger.info('Queued %s expired instance(s) for stopping.', expired_count)
+        while True:
+            try:
+                stale_count = fail_stale_claims()
+                if stale_count:
+                    logger.warning('Failed and released %s stale instance claim(s).', stale_count)
 
-            process_one_instance()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception('Instance worker cycle failed.')
+                expired_count = queue_expired_instances()
+                if expired_count:
+                    logger.info('Queued %s expired instance(s) for stopping.', expired_count)
 
-        await asyncio.sleep(poll_seconds)
+                process_one_instance(provider)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception('Instance worker cycle failed.')
+
+            await asyncio.sleep(poll_seconds)
+    finally:
+        provider.close()
 
 
 if __name__ == '__main__':
@@ -465,3 +692,4 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+

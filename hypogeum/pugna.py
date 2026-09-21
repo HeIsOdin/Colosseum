@@ -2,14 +2,17 @@ from . import REDIS_CLIENT, DIFFICULTY_LEVELS, CATEGORIES
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from psycopg2.errors import UniqueViolation
+from psycopg2.extras import Json
 from hypogeum.armamentarium import (
     as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges,
 )
+from hypogeum.instance_provider import normalize_instance_config
 from hypogeum.vomitoria import (
     flag_hash, series_signup_required, admin_required, cooldown_check, locked_challenge_check
 )
 
 import uuid
+import json
 import logging
 import psycopg2.sql as sql
 
@@ -33,7 +36,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
             refresh_series_and_challenges(REDIS_CLIENT)
             raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         required = {"title", "description", "author", "points", "category", "difficulty", "flag"}
-        optional = {"prerequisite", "requires_instance", "file_url"}
+        optional = {"prerequisite", "requires_instance", "instance_config", "file_url"}
         allowed = required | optional
 
         unknown = set(challenge.keys()) - allowed
@@ -79,6 +82,24 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
             return "", False, "Invalid value for requires_instance. Must be a boolean.", 400
         normalized_challenge["requires_instance"] = require_instance
 
+        raw_instance_config = challenge.get("instance_config")
+        if isinstance(raw_instance_config, str):
+            try:
+                raw_instance_config = json.loads(raw_instance_config)
+            except json.JSONDecodeError as exc:
+                return "", False, f"instance_config must be valid JSON: {exc.msg}", 400
+
+        if require_instance:
+            try:
+                instance_config = normalize_instance_config(raw_instance_config)
+            except ValueError as exc:
+                return "", False, str(exc), 400
+            normalized_challenge["instance_config"] = Json(instance_config)
+        elif raw_instance_config not in (None, {}):
+            return "", False, "instance_config requires requires_instance=true.", 400
+        else:
+            normalized_challenge.pop("instance_config", None)
+
         file_url = normalized_challenge.get("file_url")
         if file_url is not None:
             if not isinstance(file_url, str):
@@ -89,7 +110,7 @@ def _create_challenge(sid: int, **challenge) -> tuple[str, bool, str, int]:
             elif len(file_url) > 2048:
                 return "", False, "file_url must not exceed 2048 characters.", 400
             elif not file_url.startswith("https://"):
-                return "", False, "file_url must start with  or https://", 400
+                return "", False, "file_url must start with https://", 400
             else:
                 normalized_challenge["file_url"] = file_url
 
@@ -415,6 +436,11 @@ def integration_test(checklist: list[str], checks: list[bool], sid: int, pid: uu
         "category": "Warmup",
         "flag": env('COLOSSEUM_TEST_FLAG', "CTF{f4k3_fl4g_f0r_t3st1ng}")[0],
         "requires_instance": True,
+        "instance_config": {
+            "provider": "docker",
+            "image": "nginx:alpine",
+            "container_port": 80,
+        },
     }
 
     cid: int| None = None
@@ -497,3 +523,4 @@ def integration_test_cleanup(checklist: list[str], checks: list[bool], sid: int,
     except Exception as e:
         logger.exception(f"Cleanup check failed: {e}")
         checks.append(False)
+

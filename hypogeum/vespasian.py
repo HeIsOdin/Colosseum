@@ -118,6 +118,7 @@ def _create_challenges_table(cursor: psycopg2.extensions.cursor) -> None:
                 prerequisite BIGINT,
                 flag VARCHAR(255) NOT NULL,
                 requires_instance BOOLEAN NOT NULL DEFAULT FALSE,
+                instance_config JSONB NOT NULL DEFAULT '{}'::JSONB,
                 file_url VARCHAR(2048),
                 PRIMARY KEY (sid, cid),
                 FOREIGN KEY (sid, prerequisite) REFERENCES {}(sid, cid) ON DELETE SET NULL
@@ -126,6 +127,13 @@ def _create_challenges_table(cursor: psycopg2.extensions.cursor) -> None:
             sql.Identifier(table_name), sql.Identifier(series_table), sql.Identifier(table_name),
             difficulty=difficulty, category=category
         )
+    )
+
+    cursor.execute(
+        sql.SQL("""
+            ALTER TABLE {}
+            ADD COLUMN IF NOT EXISTS instance_config JSONB NOT NULL DEFAULT '{}'::JSONB;
+        """).format(sql.Identifier(table_name))
     )
 
 def _create_user_table(cursor: psycopg2.extensions.cursor) -> None:
@@ -244,6 +252,10 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
                 sid BIGINT REFERENCES {}(sid) ON DELETE CASCADE,
                 cid BIGINT,
                 pid UUID REFERENCES {}(pid) ON DELETE CASCADE,
+                provider VARCHAR(50) NOT NULL DEFAULT 'docker',
+                provider_instance_id VARCHAR(255),
+                provider_metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+                last_error TEXT,
                 host VARCHAR(255),
                 port INTEGER,
                 type VARCHAR(50) NOT NULL CHECK (type IN ({types})) DEFAULT 'private',
@@ -264,6 +276,16 @@ def _create_instances_table(cursor: psycopg2.extensions.cursor) -> None:
             types=types,
             status=status
         )
+    )
+
+    cursor.execute(
+        sql.SQL("""
+            ALTER TABLE {}
+                ADD COLUMN IF NOT EXISTS provider VARCHAR(50) NOT NULL DEFAULT 'docker',
+                ADD COLUMN IF NOT EXISTS provider_instance_id VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS provider_metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+                ADD COLUMN IF NOT EXISTS last_error TEXT;
+        """).format(sql.Identifier(table_name))
     )
 
 def _create_update_at_trigger(cursor: psycopg2.extensions.cursor) -> None:
@@ -650,6 +672,10 @@ def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_instances_one_shared_per_challenge
             ON {} (sid, cid)
             WHERE type = 'shared';
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_instances_provider_identity
+            ON {} (provider, provider_instance_id)
+            WHERE provider_instance_id IS NOT NULL;
                 
             CREATE INDEX IF NOT EXISTS idx_instances_uat ON {} (updated_at) WHERE claim_id IS NULL
             AND status IN ('starting', 'pausing', 'resuming', 'stopping', 'restarting', 'resetting');
@@ -658,6 +684,7 @@ def _create_indexes(cursor: psycopg2.extensions.cursor) -> None:
             sql.Identifier(solves_table),
             sql.Identifier(solves_table),
             sql.Identifier(memberships_table),
+            sql.Identifier(instances_table),
             sql.Identifier(instances_table),
             sql.Identifier(instances_table)
         )
@@ -720,3 +747,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
