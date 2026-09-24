@@ -1,0 +1,10 @@
+.locked-panel, .download-panel, .instance-panel {
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background: rgba(0,0,0,0.18);
+}
+.locked-panel, .download-panel, .instance-panel h4 { display: flex; align-items: center; gap: 10px; }
+.download-panel { color: var(--gold-bright); }
+.instance-panel h4 { margin: 0 0 12px; }

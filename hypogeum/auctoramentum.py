@@ -4,9 +4,10 @@ from flask_login import login_required, current_user
 from datetime import datetime, timedelta
 from hypogeum.vomitoria import admin_required
 from hypogeum.armamentarium import (
-    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges
+    as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges,
 )
 
+import json
 import uuid
 import logging
 import psycopg2.sql as sql
@@ -52,7 +53,24 @@ def get_series_list():
     series_list, success, message, status_code = _get_series_list(offset, limit)
     return jsonify({"success": success, "message": message, "series": series_list}), status_code
 
-def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, bool, str, int]:
+def _series_has_started(starts_at: datetime | None) -> bool:
+    if starts_at is None:
+        return False
+    if starts_at.tzinfo is not None and starts_at.utcoffset() is not None:
+        now = datetime.now(starts_at.tzinfo)
+    else:
+        now = datetime.now()
+    return starts_at <= now
+
+def _default_arena_stats() -> dict:
+    return {
+        "rank": None,
+        "active_players": 0,
+        "points": 0,
+        "solves": 0,
+    }
+
+def _get_series_data(sid: int, offset: int = 0, limit: int = 10, pid: uuid.UUID | None = None) -> tuple[dict, bool, str, int]:
     """
     Retrieve the data for a specific series by its ID, including all challenges
     and their solvers.
@@ -64,12 +82,17 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
 
         series_table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         challenges_table = sql.Identifier(env('POSTGRESQL_CHALLENGES_TABLE')[0])
         solves_table = sql.Identifier(env('POSTGRESQL_SOLVES_TABLE')[0])
         user_table = sql.Identifier(env('POSTGRESQL_USER_TABLE')[0])
+        instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
 
         series_query = sql.SQL(
             "SELECT sid, title, description, starts_at, ends_at, image "
@@ -77,29 +100,64 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
         ).format(series_table=series_table)
 
         challenges_query = sql.SQL("""
-            SELECT c.cid, c.title, c.description, c.points, c.category, c.difficulty, c.prerequisite,
-                    c.requires_instance, c.file_url, c.author,
-            COALESCE(
-                (
-                SELECT json_agg(
-                    json_build_object(
-                        'display_name', u.display_name,
-                        'avatar', u.avatar,
-                        'solved_at', limited_solves.solved_at
-                    )
-                )
-                FROM (SELECT pid, solved_at
-                    FROM {s_table} WHERE cid = c.cid AND sid = %s
-                    ORDER BY solved_at ASC LIMIT %s OFFSET %s
-                ) AS limited_solves
-                LEFT JOIN {u_table} u ON limited_solves.pid = u.pid
-            ), '[]') AS solvers
-            FROM {c_table} c WHERE c.sid = %s
+            SELECT c.cid, c.title, c.description, c.points, c.category, c.difficulty,
+                c.prerequisite, c.requires_instance, c.file_url, c.author,
+
+                COALESCE((
+                    SELECT json_agg(
+                        json_build_object(
+                            'pid', u.pid,
+                            'display_name', u.display_name,
+                            'avatar', u.avatar,
+                            'solved_at', limited_solves.solved_at
+                        )
+                    ) FROM (
+                        SELECT pid, solved_at FROM {s_table} WHERE cid = c.cid AND sid = c.sid
+                        ORDER BY solved_at ASC LIMIT %s OFFSET %s
+                    ) AS limited_solves
+                    LEFT JOIN {u_table} u ON limited_solves.pid = u.pid
+                ), '[]') AS solvers
+            FROM {c_table} c
+            WHERE c.sid = %s
             ORDER BY c.points DESC, c.cid ASC
         """).format(
             c_table=challenges_table,
             s_table=solves_table,
-            u_table=user_table
+            u_table=user_table,
+            i_table=instances_table
+        )
+
+        arena_stats_query = sql.SQL("""
+            WITH per_player AS (
+                SELECT
+                    s.pid,
+                    COALESCE(SUM(c.points), 0)::INTEGER AS points,
+                    COUNT(*)::INTEGER AS solves,
+                    MIN(s.solved_at) AS first_solve_at
+                FROM {s_table} s
+                JOIN {c_table} c ON c.sid = s.sid AND c.cid = s.cid
+                WHERE s.sid = %s
+                GROUP BY s.pid
+            ), ranked AS (
+                SELECT
+                    pid,
+                    points,
+                    solves,
+                    RANK() OVER (
+                        ORDER BY points DESC, solves DESC, first_solve_at ASC, pid ASC
+                    )::INTEGER AS rank
+                FROM per_player
+            )
+            SELECT
+                (SELECT COUNT(*)::INTEGER FROM per_player) AS active_players,
+                r.rank,
+                COALESCE(r.points, 0)::INTEGER AS points,
+                COALESCE(r.solves, 0)::INTEGER AS solves
+            FROM (SELECT 1) singleton
+            LEFT JOIN ranked r ON r.pid = %s
+        """).format(
+            s_table=solves_table,
+            c_table=challenges_table,
         )
 
         with db_connect() as conn:
@@ -111,8 +169,12 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
 
                 series_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 series_data = dict(zip(series_columns, series_row))
+                if not _series_has_started(series_data.get('starts_at')):
+                    return {}, False, "Series has not started yet.", 403
 
-                cursor.execute(challenges_query, (sid, limit, offset, sid))
+                #lease = int(env('INSTANCE_LEASE', '1800')[0]) # In seconds
+                #cursor.execute(challenges_query, (lease, limit, offset, pid, pid, sid))
+                cursor.execute(challenges_query, (limit, offset, sid))
                 challenges_columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 challenges_rows = cursor.fetchall()
 
@@ -120,8 +182,23 @@ def _get_series_data(sid: int, offset: int = 0, limit: int = 10) -> tuple[dict, 
                     dict(zip(challenges_columns, row)) for row in challenges_rows
                 ]
 
-        return series_data, True, "Series data retrieved successfully.", 200
+                if pid is not None:
+                    cursor.execute(arena_stats_query, (sid, pid))
+                    stats_row = cursor.fetchone()
+                    if stats_row:
+                        active_players, rank, points, solves = stats_row
+                        series_data['arena_stats'] = {
+                            "rank": rank,
+                            "active_players": active_players or 0,
+                            "points": points or 0,
+                            "solves": solves or 0,
+                        }
+                    else:
+                        series_data['arena_stats'] = _default_arena_stats()
+                else:
+                    series_data['arena_stats'] = _default_arena_stats()
 
+        return series_data, True, "Series data retrieved successfully.", 200
     except ValueError as ve:
         logger.debug(f"Validation error while retrieving series data for Series ID {sid}: {ve}")
         return {}, False, str(ve), 404
@@ -135,7 +212,8 @@ def get_series_data(sid: int):
     offset = request.args.get('offset', default=0, type=int)
     limit = request.args.get('limit', default=10, type=int)
     limit = min(max(limit, 1), 20)
-    series_data, success, message, status_code = _get_series_data(sid, offset, limit)
+    pid = as_uuid(current_user.id)
+    series_data, success, message, status_code = _get_series_data(sid, offset, limit, pid)
     return jsonify({"success": success, "message": message, "series": series_data}), status_code
 
 def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
@@ -149,11 +227,15 @@ def _get_series_overview(sid: int) -> tuple[dict, bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
-            for col in ['title', 'description', 'starts_at', 'ends_at', 'image']
+            for col in ['title', 'description', 'host', 'starts_at', 'ends_at', 'image', 'metadata']
         )
         query = sql.SQL("SELECT {columns} FROM {table} WHERE sid = %s").format(
             table=table,
@@ -182,17 +264,19 @@ def get_series_overview(sid: int):
     overview, success, message, status_code = _get_series_overview(sid)
     return jsonify({"success": success, "message": message, "overview": overview}), status_code
 
-def _create_series(title: str, description: str, starts_at_str: str,
-                   ends_at_str: str, image: str) -> tuple[str, bool, str, int]:
+def _create_series(title: str, description: str, host: dict[str, str], image: str, metadata: dict,
+                   starts_at_str: str, ends_at_str: str) -> tuple[str, bool, str, int]:
     """
     Create a new series in the database.
 
     Args:
         - title (str) : The title of the series.
         - description (str) : The description of the series.
+        - host (dict) : A dictionary containing the host's name and URL.
         - starts_at_str (str) : The start date of the series.
         - ends_at_str (str) : The end date of the series.
         - image (str) : The image URL for the series.
+        - metadata (dict) : Additional metadata for the series.
     
     Returns:
         tuple: A tuple containing a boolean indicating success, a message, and an HTTP status code.
@@ -207,12 +291,20 @@ def _create_series(title: str, description: str, starts_at_str: str,
         if not title.strip(): return "", False, "Title must not be empty.", 400
         if not description.strip(): return "", False, "Description must not be empty.", 400
         if len(title) > 50: return "", False, "Title must not exceed 50 characters.", 400
+        if 'logo' in host and 'logo_url' not in host:
+            host['logo_url'] = host.pop('logo')
+        if 'name' not in host or len(host['name'].strip()) == 0 or len(host['name']) > 20:
+            return "", False, "Host name is invalid", 400
+        if 'url' in host and (len(host['url'].strip()) == 0 or len(host['url']) > 100):
+            return "", False, "Host URL is invalid", 400
+        if 'logo_url' in host and (len(host['logo_url'].strip()) == 0 or len(host['logo_url']) > 100):
+            return "", False, "Host logo URL is invalid", 400
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         columns = sql.SQL(', ').join(
             sql.Identifier(col)
-            for col in ['title', 'description', 'starts_at', 'ends_at', 'image']
+            for col in ['title', 'description', 'host', 'starts_at', 'ends_at', 'image', 'metadata']
         )
-        values = sql.SQL("(%s, %s, %s, %s, %s)")
+        values = sql.SQL("(%s, %s, %s, %s, %s, %s, %s)")
         query = sql.SQL("INSERT INTO {table} ({columns}) VALUES {values} RETURNING sid").format(
                             table=table,
                             columns=columns,
@@ -220,7 +312,7 @@ def _create_series(title: str, description: str, starts_at_str: str,
                         )
         with db_connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(query, (title, description, starts_at, ends_at, image))
+                cursor.execute(query, (title, description, json.dumps(host), starts_at, ends_at, image, json.dumps(metadata)))
                 res = cursor.fetchone()
                 if not res:
                     logger.error("Failed to retrieve the newly created series ID.")
@@ -244,9 +336,9 @@ def _create_series(title: str, description: str, starts_at_str: str,
 @login_required
 @admin_required
 def create_series():
-    data = request.get_json()
+    data = dict(request.get_json())
     if data is None:
-        data = request.form.to_dict()
+        data: dict = request.form.to_dict()
     data["starts_at_str"] = data.pop("starts_at", '')
     data["ends_at_str"] = data.pop("ends_at", '')
     sid, success, message, status_code = _create_series(**data)
@@ -263,7 +355,11 @@ def _delete_series(sid: int) -> tuple[bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         table = sql.Identifier(env('POSTGRESQL_SERIES_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE sid = %s").format(
             table=table
@@ -301,7 +397,11 @@ def _join_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
         table_name = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
         query = sql.SQL("INSERT INTO {table} (sid, pid) VALUES (%s, %s) ON CONFLICT DO NOTHING"
@@ -339,7 +439,11 @@ def _leave_series(sid: int, pid: uuid.UUID,) -> tuple[bool, str, int]:
     """
     logger = logging.getLogger(__name__)
     try:
-        raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        try:
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
+        except ValueError:
+            refresh_series_and_challenges(REDIS_CLIENT)
+            raise_on_missing_series_and_challenges(REDIS_CLIENT, sid)
         
         user_table = sql.Identifier(env('POSTGRESQL_MEMBERSHIPS_TABLE')[0])
         query = sql.SQL("DELETE FROM {table} WHERE sid = %s AND pid = %s").format(
@@ -382,9 +486,11 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID,) 
     series_data = {
         "title": "Diagnostics",
         "description": "This series is created for integration testing purposes.",
+        "host": {"name": "Integration Test Suite", "url": "https://integration.example.com"},
         "starts_at_str": datetime.now().isoformat(),
         "ends_at_str": (datetime.now() + timedelta(days=1)).isoformat(),
-        "image": "https://example.com/test_image.png"
+        "image": "https://example.com/test_image.png",
+        "metadata": {}
     }
         
     checklist.append("Series Creation was successful.")
@@ -453,7 +559,7 @@ def integration_test(checklist: list[str], checks: list[bool], pid: uuid.UUID,) 
     checklist.append("Series Data Retrieval was successful.")
     try:
         if sid is None: raise ValueError("Series ID is None, cannot retrieve series data.")
-        series_data, success, message, _ = _get_series_data(sid)
+        series_data, success, message, _ = _get_series_data(sid, pid=pid)
         if success and isinstance(series_data, dict):
             checks.append(True)
         else:

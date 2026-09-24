@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" role="img" aria-labelledby="title desc">
+  <title id="title">Biafra dossier</title>
+  <desc id="desc">An archival CTF campaign dossier with maps, stamps, and signal markings.</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#d9c6a2"/>
+      <stop offset="0.45" stop-color="#a78d61"/>
+      <stop offset="1" stop-color="#3b2d22"/>
+    </linearGradient>
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 0.18"/></feComponentTransfer>
+    </filter>
+  </defs>
+  <rect width="900" height="560" fill="#0a0907"/>
+  <g transform="translate(104 48) rotate(-2)">
+    <rect width="690" height="462" rx="14" fill="url(#paper)"/>
+    <rect width="690" height="462" rx="14" filter="url(#noise)" opacity="0.32"/>
+    <path d="M40 78h610M40 132h420M40 190h560M40 242h488M40 294h598M40 346h508" stroke="#2a2018" stroke-opacity="0.38" stroke-width="7" stroke-linecap="round"/>
+    <path d="M428 92c70 10 118 39 147 88 25 43 24 91-2 143-20 40-56 74-108 103" fill="none" stroke="#4f5e35" stroke-width="7" stroke-linecap="round" stroke-dasharray="15 14" opacity="0.62"/>
+    <g transform="translate(458 236) rotate(-14)">
+      <rect width="160" height="64" rx="8" fill="none" stroke="#842b22" stroke-width="7"/>
+      <text x="80" y="41" text-anchor="middle" font-family="monospace" font-size="24" font-weight="800" fill="#842b22">ARCHIVE</text>
+    </g>
+    <g fill="#1b140f" opacity="0.72" font-family="monospace" font-weight="700">
+      <text x="42" y="48" font-size="31">BIAFRA CAMPAIGN</text>
+      <text x="43" y="424" font-size="18">CASE FILE / SIGNALS / EXHIBITS / FLAGS</text>
+    </g>
+  </g>
+  <g opacity="0.45" stroke="#e8b86b" stroke-width="4" fill="none">
+    <path d="M40 492c90-42 164-42 222 0s132 42 222 0 164-42 222 0 110 42 154 0"/>
+    <path d="M40 518c90-42 164-42 222 0s132 42 222 0 164-42 222 0 110 42 154 0"/>
+  </g>
+</svg>

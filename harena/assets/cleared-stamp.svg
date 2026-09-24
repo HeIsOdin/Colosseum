@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 96" role="img" aria-labelledby="title desc">
+  <title id="title">Cleared stamp</title>
+  <desc id="desc">A red archival cleared stamp.</desc>
+  <g transform="translate(14 14) rotate(-7 106 34)" fill="none" stroke="#8e2f25" stroke-width="7">
+    <rect width="212" height="68" rx="10"/>
+    <path d="M20 22h172M20 48h172" opacity="0.55"/>
+  </g>
+  <text x="120" y="58" text-anchor="middle" font-family="monospace" font-size="34" font-weight="900" fill="#8e2f25" transform="rotate(-7 120 50)">CLEARED</text>
+</svg>

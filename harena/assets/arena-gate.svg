@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" role="img" aria-labelledby="title desc">
+  <title id="title">Hypogeum arena gate</title>
+  <desc id="desc">A dark Roman arena gate with bronze arches and underground light.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#1a100d"/>
+      <stop offset="1" stop-color="#050403"/>
+    </linearGradient>
+    <radialGradient id="light" cx="50%" cy="78%" r="48%">
+      <stop stop-color="#e8b86b" stop-opacity="0.65"/>
+      <stop offset="0.45" stop-color="#8e2f25" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="stone" x1="0" x2="1">
+      <stop stop-color="#32251e"/>
+      <stop offset="0.5" stop-color="#4a3428"/>
+      <stop offset="1" stop-color="#1a120f"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="620" fill="url(#sky)"/>
+  <rect y="360" width="900" height="260" fill="#090706"/>
+  <ellipse cx="450" cy="520" rx="360" ry="90" fill="url(#light)"/>
+  <g opacity="0.34" stroke="#f2d094" stroke-width="2">
+    <path d="M40 360h820M70 410h760M120 460h660M190 510h520"/>
+    <path d="M100 0v620M220 0v620M340 0v620M460 0v620M580 0v620M700 0v620M820 0v620" opacity="0.28"/>
+  </g>
+  <g fill="url(#stone)" stroke="#d09a57" stroke-opacity="0.38" stroke-width="6">
+    <path d="M90 560V265c0-95 77-172 172-172s172 77 172 172v295h-84V270c0-49-39-88-88-88s-88 39-88 88v290H90Z"/>
+    <path d="M466 560V265c0-95 77-172 172-172s172 77 172 172v295h-84V270c0-49-39-88-88-88s-88 39-88 88v290h-84Z"/>
+  </g>
+  <path d="M0 560h900v60H0z" fill="#1a120f"/>
+  <path d="M128 560h644" stroke="#e8b86b" stroke-opacity="0.58" stroke-width="8" stroke-linecap="round"/>
+  <g fill="#080706">
+    <path d="M224 560V282c0-21 17-38 38-38s38 17 38 38v278z"/>
+    <path d="M600 560V282c0-21 17-38 38-38s38 17 38 38v278z"/>
+  </g>
+  <g opacity="0.7">
+    <circle cx="156" cy="340" r="7" fill="#f2c36d"/>
+    <circle cx="744" cy="340" r="7" fill="#f2c36d"/>
+    <path d="M156 340c-20 34-20 58 0 76 20-18 20-42 0-76ZM744 340c-20 34-20 58 0 76 20-18 20-42 0-76Z" fill="#8e2f25" opacity="0.58"/>
+  </g>
+</svg>
