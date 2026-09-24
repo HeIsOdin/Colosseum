@@ -7,7 +7,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Protocol, cast
 
-import docker
+from docker import DockerClient, from_env
 from docker.models.containers import Container
 from docker.errors import APIError, NotFound
 from docker.tls import TLSConfig
@@ -219,14 +219,14 @@ def normalize_instance_config(config: dict | None, require_image: bool = True) -
     return normalized
 
 
-def create_docker_client() -> docker.DockerClient:
+def create_docker_client() -> DockerClient:
     """Use configured mutual TLS when present, otherwise use the local Engine."""
     try:
         remote_url, cert_path, key_path, ca_path = env(
             "DOCKER_REMOTE_URL,DOCKER_TLS_CERT,DOCKER_TLS_KEY,DOCKER_TLS_CA"
         )
     except Exception:
-        client = docker.from_env()
+        client = from_env()
         client.ping()
         return client
 
@@ -240,7 +240,7 @@ def create_docker_client() -> docker.DockerClient:
         ca_cert=str(certificate_paths[2]),
         verify=True,
     )
-    client = docker.DockerClient(base_url=remote_url, tls=tls)
+    client = DockerClient(base_url=remote_url, tls=tls)
     client.ping()
     return client
 
@@ -249,7 +249,7 @@ class DockerInstanceProvider:
     """Docker Engine implementation of the instance lifecycle contract."""
     name = "docker"
 
-    def __init__(self, client: docker.DockerClient | None = None) -> None:
+    def __init__(self, client: DockerClient | None = None) -> None:
         self.client = client or create_docker_client()
         self.public_host = env("INSTANCE_PUBLIC_HOST", "localhost")[0]
         self.network = env("INSTANCE_DOCKER_NETWORK", "bridge")[0]

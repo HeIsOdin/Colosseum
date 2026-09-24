@@ -5,11 +5,8 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from hypogeum.armamentarium import env, db_connect, as_uuid
 from hypogeum.choragium import (
-    DiscoveredInstance,
-    DockerInstanceProvider,
-    InstanceProvider,
-    MockInstanceProvider,
-    ProviderResult,
+    DockerInstanceProvider, InstanceProvider, MockInstanceProvider,
+    DiscoveredInstance, ProviderResult,
 )
 from hypogeum.vomitoria import locked_challenge_check
 
@@ -20,7 +17,6 @@ import logging
 import psycopg2
 import psycopg2.sql as sql
 
-
 choragium_bp = Blueprint('choragium', __name__, url_prefix='/series/<int:sid>')
 
 def _serialize_instance(instance: dict) -> dict:
@@ -30,7 +26,6 @@ def _serialize_instance(instance: dict) -> dict:
     instance['allowed_actions'] = list(INSTANCE_TRANSITIONS.get(status, {}).keys())
     return instance
 
-
 def _rows_to_instances(cursor: psycopg2.extensions.cursor, rows: list[tuple]) -> list[dict]:
     """Convert a list of database rows into a list of serialized instance dictionaries."""
     columns = [description[0] for description in cursor.description] if cursor.description else []
@@ -38,7 +33,6 @@ def _rows_to_instances(cursor: psycopg2.extensions.cursor, rows: list[tuple]) ->
 
 
 # --- Routes and their corresponding private functions ---
-
 
 def _get_all_relevant_instances(sid: int, pid: uuid.UUID) -> list[dict]:
     """Retrieve the player's private instances and shared instances in one series."""
@@ -65,7 +59,6 @@ def _get_all_relevant_instances(sid: int, pid: uuid.UUID) -> list[dict]:
         )
         return []
 
-
 def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
     """Retrieve all private instances for a player in one series."""
     return [
@@ -74,7 +67,6 @@ def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
         if instance['type'] == 'private'
     ]
 
-
 @choragium_bp.get('/instances')
 @login_required
 def get_all_private_instances(sid: int):
@@ -82,7 +74,6 @@ def get_all_private_instances(sid: int):
     pid = as_uuid(current_user.id)
     instances = _get_all_private_instances(sid, pid)
     return jsonify({'success': True, 'instances': instances}), 200
-
 
 def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
     """Retrieve the player's private instance or the challenge's shared instance."""
@@ -112,7 +103,6 @@ def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
         )
         return None
 
-
 @choragium_bp.get('/challenges/<int:cid>/instance')
 @login_required
 def get_instance(sid: int, cid: int):
@@ -122,7 +112,6 @@ def get_instance(sid: int, cid: int):
     if instance is None:
         return jsonify({'success': False, 'message': 'Instance not found.'}), 404
     return jsonify({'success': True, 'instance': instance}), 200
-
 
 def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin: bool = False,
                     instance_type: str = 'private') -> dict:
@@ -157,15 +146,13 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
         logger.exception('Error controlling instance for %s:%s:%s: %s', sid, cid, pid, exc)
         return {'success': False, 'message': str(exc), 'status_code': 500}
 
-
 @choragium_bp.patch('/challenges/<int:cid>')
 @login_required
 @locked_challenge_check
 def control_challenge_instance(sid: int, cid: int):
     """Validate and queue an instance lifecycle command."""
     data = request.get_json(silent=True)
-    if data is None:
-        data = request.form.to_dict()
+    if data is None: data = request.form.to_dict()
 
     action = data.get('action')
     if not action or not isinstance(action, str):
@@ -174,14 +161,7 @@ def control_challenge_instance(sid: int, cid: int):
     action = action.strip().lower()
     pid = as_uuid(current_user.id)
     is_admin = current_user.is_admin
-    result = _control_instance(
-        sid,
-        cid,
-        pid,
-        action,
-        is_admin,
-        'shared' if is_admin else 'private',
-    )
+    result = _control_instance(sid, cid, pid, action, is_admin, 'shared' if is_admin else 'private')
 
     success = result.get('success', False)
     message = result.get('message', 'An error occurred while controlling the instance.')
@@ -194,7 +174,6 @@ def control_challenge_instance(sid: int, cid: int):
 
 
 # --- Infrastructure worker ---
-
 
 def queue_expired_instances() -> int:
     """
@@ -220,7 +199,6 @@ def queue_expired_instances() -> int:
         with conn.cursor() as cursor:
             cursor.execute(query)
             return cursor.rowcount
-
 
 def claim_next_instance() -> dict | None:
     """
@@ -269,7 +247,6 @@ def claim_next_instance() -> dict | None:
             columns = [description[0] for description in cursor.description] if cursor.description else []
             return dict(zip(columns, row))
 
-
 def mock_docker_operation(instance: dict) -> dict:
     """Compatibility helper retained for database-only worker tests."""
     result = MockInstanceProvider().apply(instance)
@@ -280,7 +257,6 @@ def mock_docker_operation(instance: dict) -> dict:
         'provider_instance_id': result.provider_instance_id,
         'provider_metadata': result.provider_metadata,
     }
-
 
 def finalize_instance(instance: dict, provider_result: ProviderResult | dict) -> bool:
     """
@@ -344,7 +320,6 @@ def finalize_instance(instance: dict, provider_result: ProviderResult | dict) ->
             cursor.execute(query, params)
             return cursor.fetchone() is not None
 
-
 def fail_instance(instance: dict, error: Exception | str | None = None) -> bool:
     """
     Fail an operation once and clear the claim without retrying it.
@@ -368,7 +343,6 @@ def fail_instance(instance: dict, error: Exception | str | None = None) -> bool:
         )
         return cursor.fetchone() is not None
 
-
 def fail_stale_claims() -> int:
     """
     Mark abandoned intermediate operations failed and release their claims.
@@ -381,7 +355,7 @@ def fail_stale_claims() -> int:
     query = sql.SQL("""
         UPDATE {table}
         SET status = 'failed', claim_id = NULL, claimed_at = NULL,
-            last_error = 'Instance worker claim timed out.',
+            last_error = 'Instance worker claim timed out.'
         WHERE claim_id IS NOT NULL AND claimed_at < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
           AND status = ANY(%s);
     """).format(table=sql.Identifier(table_name))
@@ -400,7 +374,8 @@ def process_one_instance(provider: InstanceProvider) -> bool:
     Do we loop through all providers to find the right one,
     or do we assume that there's always only one provider at a time?
     3. Applies the provider operation to the claimed instance.
-
+    4. Finalizes the instance in the database with the provider result.
+    5. If any step fails, the instance is marked as failed and the claim is released.
     """
     logger = logging.getLogger(__name__)
     instance = claim_next_instance()
@@ -623,7 +598,6 @@ def reconcile_instances(provider: InstanceProvider) -> dict[str, int]:
                     'Failed to remove orphan provider instance %s',
                     discovered.provider_instance_id,
                 )
-
         return counts
     finally:
         if acquired:
@@ -671,4 +645,3 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
-
