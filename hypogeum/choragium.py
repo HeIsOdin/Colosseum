@@ -429,8 +429,8 @@ class DockerInstanceProvider:
     def apply(self, instance: dict[str, Any]) -> ProviderResult:
         """
         Apply the requested lifecycle operation to the instance and return the final state.
-        1. If the instance is in "starting" or "resetting" state, create a new container.
-        Do we delete the old container if we're resetting?
+        1. If the instance is in "starting" or "resetting" state, replace any existing
+        container with a newly created container.
         2. If the instance is in "stopping" state, remove the container if it exists.
         3. If the instance is in "pausing" state, pause the container if it is not already paused.
         4. If the instance is in "resuming" state, unpause the container if it is paused.
@@ -562,4 +562,3 @@ class MockInstanceProvider:
 
     def close(self) -> None:
         return None
-

@@ -39,7 +39,7 @@ INSTANCE_TRANSITIONS = {
     'failed': {
         'reset': {'intermediate': 'resetting', 'final': 'started'},
         'stop': {'intermediate': 'stopping', 'final': 'stopped'},
-},
+    },
 }
 
 # Compatibility projection used by the existing control function.

@@ -19,6 +19,45 @@ import psycopg2.sql as sql
 
 choragium_bp = Blueprint('choragium', __name__, url_prefix='/series/<int:sid>')
 
+
+def _max_active_instances() -> int:
+    """Return the configured per-player private-instance limit."""
+    try:
+        limit = int(env('INSTANCE_MAX_ACTIVE_PER_USER', '3')[0])
+    except ValueError as exc:
+        raise ValueError('INSTANCE_MAX_ACTIVE_PER_USER must be an integer.') from exc
+    if limit < 1:
+        raise ValueError('INSTANCE_MAX_ACTIVE_PER_USER must be at least 1.')
+    return limit
+
+
+def _get_instance_quota(pid: uuid.UUID) -> dict[str, int | bool]:
+    """Return global private-instance capacity for one player."""
+    instances_table = sql.Identifier(env('POSTGRESQL_INSTANCES_TABLE')[0])
+    query = sql.SQL("""
+        SELECT COUNT(*) FROM {instances_table}
+        WHERE pid = %s
+          AND type = 'private'
+          AND (
+              status NOT IN ('stopped', 'failed')
+              OR (status = 'failed' AND provider_instance_id IS NOT NULL)
+          );
+    """).format(instances_table=instances_table)
+
+    with db_connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (pid,))
+            row = cursor.fetchone()
+
+    active = int(row[0]) if row is not None else 0
+    limit = _max_active_instances()
+    return {
+        'limit': limit,
+        'active': active,
+        'remaining': max(0, limit - active),
+        'can_start': active < limit,
+    }
+
 def _serialize_instance(instance: dict) -> dict:
     """Add stable frontend metadata to an instance row."""
     status = instance['status']
@@ -60,11 +99,11 @@ def _get_all_relevant_instances(sid: int, pid: uuid.UUID) -> list[dict]:
         return []
 
 def _get_all_private_instances(sid: int, pid: uuid.UUID) -> list[dict]:
-    """Retrieve all private instances for a player in one series."""
+    """Retrieve active private instances for a player in one series."""
     return [
         instance
         for instance in _get_all_relevant_instances(sid, pid)
-        if instance['type'] == 'private'
+        if instance['type'] == 'private' and instance['status'] not in {'stopped', 'failed'}
     ]
 
 @choragium_bp.get('/instances')
@@ -74,6 +113,20 @@ def get_all_private_instances(sid: int):
     pid = as_uuid(current_user.id)
     instances = _get_all_private_instances(sid, pid)
     return jsonify({'success': True, 'instances': instances}), 200
+
+
+@choragium_bp.get('/instance-quota')
+@login_required
+def get_instance_quota(sid: int):
+    """Return the current player's global private-instance capacity."""
+    try:
+        quota = _get_instance_quota(as_uuid(current_user.id))
+        return jsonify({'success': True, 'quota': quota}), 200
+    except Exception as exc:
+        logging.getLogger(__name__).exception(
+            'Error retrieving instance quota for Series ID %s: %s', sid, exc,
+        )
+        return jsonify({'success': False, 'message': str(exc)}), 500
 
 def _get_instance(sid: int, cid: int, pid: uuid.UUID) -> dict | None:
     """Retrieve the player's private instance or the challenge's shared instance."""
@@ -121,7 +174,7 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
             'POSTGRESQL_CONTROL_INSTANCE_FUNCTION',
             'control_challenge_instance',
         )[0]
-        query = sql.SQL('SELECT {function_name}(%s, %s, %s, %s, %s, %s)').format(
+        query = sql.SQL('SELECT {function_name}(%s, %s, %s, %s, %s, %s, %s)').format(
             function_name=sql.Identifier(function_name),
         )
 
@@ -129,7 +182,10 @@ def _control_instance(sid: int, cid: int, pid: uuid.UUID, action: str, is_admin:
             with conn.cursor() as cursor:
                 cursor.execute(
                     query,
-                    (sid, cid, pid, is_admin, action, instance_type),
+                    (
+                        sid, cid, pid, is_admin, action, instance_type,
+                        _max_active_instances(),
+                    ),
                 )
                 row = cursor.fetchone()
 
@@ -169,6 +225,10 @@ def control_challenge_instance(sid: int, cid: int):
     response = {'success': success, 'message': message}
     if success:
         response['action'] = result.get('action', action)
+    if result.get('code'):
+        response['code'] = result['code']
+    if result.get('quota'):
+        response['quota'] = result['quota']
 
     return jsonify(response), status_code
 
@@ -200,10 +260,10 @@ def queue_expired_instances() -> int:
             cursor.execute(query)
             return cursor.rowcount
 
-def claim_next_instance() -> dict | None:
+def claim_next_instance(provider_name: str) -> dict | None:
     """
-    Claim one intermediate instance without waiting on rows claimed elsewhere.
-    1. Selects one instance that is in an intermediate state (starting, stopping, etc.)
+    Claim one intermediate instance for a provider without waiting on other claims.
+    1. Selects one instance for the named provider that is in an intermediate state
     and has no claim_id, ordered by updated_at ascending, and locks it for update.
     2. Updates the claim_id and claimed_at fields of that instance to mark it as claimed.
     3. Returns the instance row as a dictionary, or None if no instance was available to claim.  
@@ -219,7 +279,9 @@ def claim_next_instance() -> dict | None:
             FROM {instances_table} AS instance
             JOIN {challenges_table} AS challenge
               ON challenge.sid = instance.sid AND challenge.cid = instance.cid
-            WHERE instance.status = ANY(%s) AND instance.claim_id IS NULL
+            WHERE instance.status = ANY(%s)
+              AND instance.provider = %s
+              AND instance.claim_id IS NULL
             ORDER BY instance.updated_at ASC FOR UPDATE SKIP LOCKED LIMIT 1
         )
         UPDATE {instances_table} AS instance
@@ -240,7 +302,7 @@ def claim_next_instance() -> dict | None:
 
     with db_connect() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(query, (list(intermediate_states), claim_id))
+            cursor.execute(query, (list(intermediate_states), provider_name, claim_id))
             row = cursor.fetchone()
             if row is None: return None
 
@@ -368,17 +430,12 @@ def fail_stale_claims() -> int:
 
 def process_one_instance(provider: InstanceProvider) -> bool:
     """
-    Claim and process at most one lifecycle operation.
-    1. Claims one instance that is in an intermediate state (starting, stopping, etc.)
-    2. Checks that the instance's provider matches the given provider.
-    Do we loop through all providers to find the right one,
-    or do we assume that there's always only one provider at a time?
-    3. Applies the provider operation to the claimed instance.
-    4. Finalizes the instance in the database with the provider result.
-    5. If any step fails, the instance is marked as failed and the claim is released.
+    Claim and process at most one lifecycle operation for the given provider.
+    A successful operation is finalized in the database. A failed operation marks
+    the instance as failed and releases its claim.
     """
     logger = logging.getLogger(__name__)
-    instance = claim_next_instance()
+    instance = claim_next_instance(provider.name)
     if instance is None: return False
 
     try:
@@ -407,7 +464,6 @@ def _update_reconciled_instance(snapshot: dict, target_status: str,
     Update one reconciled row while holding a short row lock.
     1. Selects the current status of the instance row for update.
     2. If the current status does not match the snapshot, return False.
-    Is this because another worker has already updated the row, or because the snapshot is stale?
     3. Updates the row to the target status, host, port, provider_instance_id, provider_metadata,
     and last_error.
     4. Updates the started_at if the target status is started and started_at is NULL.
@@ -470,17 +526,14 @@ def _reconcile_target_status(snapshot: dict, discovered: DiscoveredInstance | No
     then the database should be marked as stopped.
     2. If the provider does not have the instance, and the database says it is stopped,
     but the database has a provider_instance_id, then the database should be marked as stopped.
-    Why does it need to check for a provider_instance_id?
     3. If the provider does not have the instance, and the database says it is started or paused,
     then the database should be marked as failed.
     4. If the database says it is stopping, and the provider still has the instance,
     then the database should remain as stopping.
     5. If the provider says the instance is paused, and the database says it is paused, pausing,
     or started, then the database should be marked as paused.
-    Why is started included here if the target status is for the provider to reach?
     6. If the provider says the instance is running, and the database says it is starting, started,
     paused, resuming, restarting, or resetting, then the database should be marked as started.
-    Why is started and paused included here if the target status is for the provider to reach?
     7. If the provider says the instance is dead, exited, or removing, then the database should be marked as failed.  
     8. If none of the above conditions are met, then the database should remain in its current state and no update is needed.
     """
@@ -510,7 +563,7 @@ def reconcile_instances(provider: InstanceProvider) -> dict[str, int]:
     Reconcile provider objects and database rows once at worker startup.  
     1. Obtains a global advisory lock to prevent concurrent reconciliation.
     If that fails, it returns immediately with a skipped count of 1.
-    2. Fetches all instances for the provider from the database. Why not use a provider id?
+    2. Fetches all database instances managed by the provider.
     3. Looping through each instance (snapshot):  
         a. Attempt to pull the corresponding provider instance by its provider_instance_id.
         If that fails, attempt to pull the provider instance by its (sid, cid, pid) key.

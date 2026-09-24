@@ -390,9 +390,11 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
     application_user = env("POSTGRESQL_USER")[0]
 
     query = sql.SQL("""
+        DROP FUNCTION IF EXISTS {function_name}(BIGINT, BIGINT, UUID, BOOLEAN, TEXT, TEXT);
+
         CREATE OR REPLACE FUNCTION {function_name}(
             p_sid BIGINT, p_cid BIGINT, p_pid UUID, p_is_admin BOOLEAN,
-            p_action TEXT, p_instance_type TEXT DEFAULT 'private'
+            p_action TEXT, p_instance_type TEXT, p_max_active_instances INTEGER
         )
         RETURNS JSONB
         LANGUAGE plpgsql
@@ -408,13 +410,16 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
             v_intermediate_status TEXT;
 
             v_requires_instance BOOLEAN;
+            v_provider TEXT;
             v_instance_exists BOOLEAN := FALSE;
             v_active_instances BIGINT := 0;
+            v_projected_instances BIGINT := 0;
             v_rows_updated BIGINT := 0;
 
             v_owner_pid UUID;
             v_status TEXT;
             v_previous_status TEXT;
+            v_provider_instance_id TEXT;
         BEGIN
             /* Normalize and validate the caller-supplied values */
             v_action := LOWER(BTRIM(COALESCE(p_action, '')));
@@ -444,6 +449,10 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 );
             END IF;
 
+            IF p_max_active_instances IS NULL OR p_max_active_instances < 1 THEN
+                RAISE EXCEPTION 'The private instance limit must be at least 1.';
+            END IF;
+
             IF v_requested_type = 'shared' AND NOT COALESCE(p_is_admin, FALSE) THEN
                 RETURN jsonb_build_object(
                     'success', FALSE,
@@ -452,20 +461,22 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 );
             END IF;
 
-            /* Private-instance quota decisions are serialized by player and series.
+            /* Private-instance quota decisions are serialized globally by player.
              * Shared-instance decisions are serialized by challenge.
             */
             v_lock_key := CASE
                 WHEN v_requested_type = 'shared' THEN
                     'shared:' || p_sid::TEXT || ':' || p_cid::TEXT
                 ELSE
-                    'private:' || p_sid::TEXT || ':' || p_pid::TEXT
+                    'private:' || p_pid::TEXT
             END;
 
             PERFORM pg_advisory_xact_lock(hashtextextended(v_lock_key, 0));
 
             /* Lock challenge row to prevent mutations while transacting */
-            SELECT c.requires_instance INTO v_requires_instance
+            SELECT c.requires_instance,
+                   COALESCE(NULLIF(c.instance_config->>'provider', ''), 'docker')
+            INTO v_requires_instance, v_provider
             FROM {challenges_table} AS c
             WHERE c.sid = p_sid AND c.cid = p_cid
             FOR SHARE;
@@ -490,8 +501,8 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
              * A shared instance is controlled by type and challenge; its actual
              * owner PID is loaded from the selected row.
              */
-            SELECT i.pid, i.status
-            INTO v_owner_pid, v_status
+            SELECT i.pid, i.status, i.provider_instance_id
+            INTO v_owner_pid, v_status, v_provider_instance_id
             FROM {instances_table} AS i
             WHERE i.sid = p_sid AND i.cid = p_cid
             AND (
@@ -518,23 +529,35 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 IF v_requested_type = 'private' THEN
                     SELECT COUNT(*) INTO v_active_instances
                     FROM {instances_table} AS i
-                    WHERE i.sid = p_sid
-                      AND i.pid = p_pid
+                    WHERE i.pid = p_pid
                       AND i.type = 'private'
-                      AND i.status NOT IN ('stopped', 'failed');
+                      AND (
+                          i.status NOT IN ('stopped', 'failed')
+                          OR (i.status = 'failed' AND i.provider_instance_id IS NOT NULL)
+                      );
 
-                    IF v_active_instances >= 3 THEN
+                    IF v_active_instances >= p_max_active_instances THEN
                         RETURN jsonb_build_object(
                             'success', FALSE,
-                            'message', 'Too many instances running! Stop at least one.',
-                            'status_code', 403
+                            'message', FORMAT(
+                                'Instance limit reached (%s). Stop one before starting another.',
+                                p_max_active_instances
+                            ),
+                            'code', 'instance_limit_reached',
+                            'quota', jsonb_build_object(
+                                'limit', p_max_active_instances,
+                                'active', v_active_instances,
+                                'remaining', 0,
+                                'can_start', FALSE
+                            ),
+                            'status_code', 409
                         );
                     END IF;
                 END IF;
 
                 BEGIN
-                    INSERT INTO {instances_table} (sid, cid, pid, type)
-                    VALUES (p_sid, p_cid, p_pid, v_requested_type)
+                    INSERT INTO {instances_table} (sid, cid, pid, type, provider)
+                    VALUES (p_sid, p_cid, p_pid, v_requested_type, v_provider)
                     RETURNING pid, status
                     INTO v_owner_pid, v_status;
 
@@ -552,15 +575,6 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                     'message', 'Instance is starting',
                     'action', v_action,
                     'status_code', 200
-                );
-            END IF;
-
-            /* Existing-instance validation. */
-            IF v_status = 'failed' THEN
-                RETURN jsonb_build_object(
-                    'success', FALSE,
-                    'message', 'Instance failed. Please contact admin.',
-                    'status_code', 409
                 );
             END IF;
 
@@ -586,20 +600,41 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
                 );
             END IF;
 
-            /* Starting an existing stopped private instance consumes a quota slot. */
-            IF v_requested_type = 'private' AND v_action = 'start' THEN
+            /* Start and reset may place this private instance into an active slot. */
+            IF v_requested_type = 'private' AND v_action IN ('start', 'reset') THEN
                 SELECT COUNT(*) INTO v_active_instances
                 FROM {instances_table} AS i
-                WHERE i.sid = p_sid
-                  AND i.pid = p_pid
+                WHERE i.pid = p_pid
                   AND i.type = 'private'
-                  AND i.status NOT IN ('stopped', 'failed');
+                  AND (
+                      i.status NOT IN ('stopped', 'failed')
+                      OR (i.status = 'failed' AND i.provider_instance_id IS NOT NULL)
+                  );
 
-                IF v_active_instances >= 3 THEN
+                v_projected_instances := v_active_instances + CASE
+                    WHEN v_status NOT IN ('stopped', 'failed') THEN 0
+                    WHEN v_status = 'failed' AND v_provider_instance_id IS NOT NULL THEN 0
+                    ELSE 1
+                END;
+
+                IF v_projected_instances > v_active_instances
+                   AND v_active_instances >= p_max_active_instances THEN
                     RETURN jsonb_build_object(
                         'success', FALSE,
-                        'message', 'Too many instances running! Stop at least one.',
-                        'status_code', 403
+                        'message', FORMAT(
+                            'Instance limit reached (%s). Stop one before starting another.',
+                            p_max_active_instances
+                        ),
+                        'code', 'instance_limit_reached',
+                        'quota', jsonb_build_object(
+                            'limit', p_max_active_instances,
+                            'active', v_active_instances,
+                            'remaining', GREATEST(
+                                0, p_max_active_instances - v_active_instances
+                            ),
+                            'can_start', v_active_instances < p_max_active_instances
+                        ),
+                        'status_code', 409
                     );
                 END IF;
             END IF;
@@ -636,10 +671,10 @@ def _create_instance_control_function(cursor: psycopg2.extensions.cursor,) -> No
         END;
         $function$;
 
-        REVOKE ALL ON FUNCTION {function_name}(BIGINT, BIGINT, UUID, BOOLEAN, TEXT, TEXT)
+        REVOKE ALL ON FUNCTION {function_name}(BIGINT, BIGINT, UUID, BOOLEAN, TEXT, TEXT, INTEGER)
         FROM PUBLIC;
 
-        GRANT EXECUTE ON FUNCTION {function_name}(BIGINT, BIGINT, UUID, BOOLEAN, TEXT, TEXT)
+        GRANT EXECUTE ON FUNCTION {function_name}(BIGINT, BIGINT, UUID, BOOLEAN, TEXT, TEXT, INTEGER)
         TO {application_user};
     """).format(
         function_name=sql.Identifier(function_name),

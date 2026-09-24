@@ -9,11 +9,12 @@ os.environ.setdefault("REDIS_PASSWD", "test")
 
 from hypogeum.choragium import (  # noqa: E402
     DiscoveredInstance,
+    DockerInstanceProvider,
     MockInstanceProvider,
     create_docker_client,
     normalize_instance_config,
 )
-from hypogeum.magnus import _reconcile_target_status  # noqa: E402
+from hypogeum.magnus import _reconcile_target_status, process_one_instance  # noqa: E402
 
 
 class FakeImage:
@@ -103,8 +104,8 @@ class InstanceConfigTests(unittest.TestCase):
 
     def test_missing_remote_environment_uses_local_engine(self):
         client = FakeClient()
-        with patch("hypogeum.instance_provider.env", side_effect=Exception("missing")), patch(
-            "hypogeum.instance_provider.docker.from_env", return_value=client
+        with patch("hypogeum.choragium.env", side_effect=Exception("missing")), patch(
+            "hypogeum.choragium.from_env", return_value=client
         ) as from_env:
             self.assertIs(create_docker_client(), client)
             from_env.assert_called_once_with()
@@ -121,6 +122,12 @@ class InstanceConfigTests(unittest.TestCase):
         snapshot = {"status": "started", "provider_instance_id": "missing"}
         self.assertEqual(_reconcile_target_status(snapshot, None), "failed")
 
+    def test_worker_claim_is_scoped_to_provider(self):
+        provider = MockInstanceProvider()
+        with patch("hypogeum.magnus.claim_next_instance", return_value=None) as claim:
+            self.assertFalse(process_one_instance(provider))
+        claim.assert_called_once_with("mock")
+
 
 class DockerProviderTests(unittest.TestCase):
     def setUp(self):
@@ -135,9 +142,9 @@ class DockerProviderTests(unittest.TestCase):
                 return (env_values[keys],)
             return tuple(part.strip() for part in defaults.split(delimiter))
 
-        self.env_patch = patch("hypogeum.instance_provider.env", side_effect=fake_env)
+        self.env_patch = patch("hypogeum.choragium.env", side_effect=fake_env)
         self.env_patch.start()
-        self.provider = MockInstanceProvider()
+        self.provider = DockerInstanceProvider(self.client)
 
     def tearDown(self):
         self.env_patch.stop()
@@ -177,4 +184,3 @@ class DockerProviderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
