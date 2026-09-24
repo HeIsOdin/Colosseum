@@ -1,11 +1,10 @@
 import { type CSSProperties, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   CalendarDays,
   Loader2,
-  Plus,
   Search,
   Shield,
   UserRound,
@@ -17,7 +16,7 @@ import { SeriesOverviewPage } from "@/auctoramentum";
 import { ProfilePage, AccountMenu } from "@/gladiator";
 import {
   LoadingCard, ErrorCard,
-  errorMessage, currentRoute, formatDate, getSeriesState
+  errorMessage, formatDate, getSeriesState
 } from "@/armamentarium";
 import { SeriesArenaPage } from "@/series/default/arena";
 
@@ -40,15 +39,6 @@ function getActionLabel(series: SeriesSummary, joined: boolean, loggedIn: boolea
   if (state === "upcoming") return "Prepare";
   if (!loggedIn) return "Learn More";
   return joined ? "Continue" : "Join Series";
-}
-
-function parseMetadataJson(raw: string): Record<string, unknown> {
-  if (!raw.trim()) return {};
-  const parsed = JSON.parse(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Metadata must be a JSON object.");
-  }
-  return parsed as Record<string, unknown>;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

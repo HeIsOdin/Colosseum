@@ -147,6 +147,15 @@ export type Instance = z.infer<typeof InstanceSchema>;
 export const RunningInstanceSchema = InstanceSchema;
 export type RunningInstance = Instance;
 
+export const InstanceQuotaSchema = z.object({
+  limit: z.coerce.number().int().positive(),
+  active: z.coerce.number().int().nonnegative(),
+  remaining: z.coerce.number().int().nonnegative(),
+  can_start: z.boolean(),
+});
+
+export type InstanceQuota = z.infer<typeof InstanceQuotaSchema>;
+
 export const ChallengeSchema = z.object({
   cid: z.number(),
   title: z.string(),
@@ -209,7 +218,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   const text = await response.text();
-  let payload: unknown = null;
+  let payload: unknown;
 
   try {
     payload = text ? JSON.parse(text) : null;
@@ -322,6 +331,11 @@ export const api = {
   async listInstances(sid: number): Promise<RunningInstance[]> {
     const payload = await request<{ instances: unknown[] }>(`/series/${sid}/instances`);
     return z.array(RunningInstanceSchema).parse(payload.instances ?? []);
+  },
+
+  async getInstanceQuota(sid: number): Promise<InstanceQuota> {
+    const payload = await request<{ quota: unknown }>(`/series/${sid}/instance-quota`);
+    return InstanceQuotaSchema.parse(payload.quota);
   },
 
   async getPlayer(pid: string): Promise<Player> {

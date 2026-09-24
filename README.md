@@ -6,7 +6,7 @@ Playground is where I host all my CTFs
 Run the database-backed Docker worker separately from the web process:
 
 ```bash
-python -m hypogeum.choragium
+python -m hypogeum.magnus
 ```
 
 The worker uses the local Docker Engine when any of the following variables are
@@ -28,6 +28,7 @@ INSTANCE_DOCKER_NETWORK=bridge
 INSTANCE_LEASE=1800
 INSTANCE_WORKER_POLL_SECONDS=5
 INSTANCE_CLAIM_TIMEOUT=300
+INSTANCE_MAX_ACTIVE_PER_USER=3
 INSTANCE_MAX_MEMORY_MB=2048
 INSTANCE_MAX_CPUS=2
 INSTANCE_MAX_PIDS=512

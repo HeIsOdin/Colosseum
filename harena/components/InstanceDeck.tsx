@@ -205,6 +205,7 @@ export default function InstanceDeck({
       onError(null);
       await queryClient.invalidateQueries({ queryKey: ["instance", sid, challenge.cid] });
       await queryClient.invalidateQueries({ queryKey: ["instances", sid] });
+      await queryClient.invalidateQueries({ queryKey: ["instance-quota"] });
     },
     onError: (err, _action, context) => {
       setInstance(context?.existingInstance ?? null);
@@ -236,6 +237,17 @@ export default function InstanceDeck({
     }
   }, [selectedInstanceQuery.data]);
 
+  const instanceQuotaQuery = useQuery({
+    queryKey: ["instance-quota", sid],
+    queryFn: () => api.getInstanceQuota(sid),
+    enabled: requiresInstance && !locked && !isShared,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
+
   const runningInstancesQuery = useQuery({
     queryKey: ["instances", sid],
     queryFn: () => api.listInstances(sid),
@@ -247,9 +259,11 @@ export default function InstanceDeck({
     refetchIntervalInBackground: false,
   });
 
-  const controlsBlocked = !canControlLifecycle || actionPending || isPendingInstance || status === "failed";
+  const controlsBlocked = !canControlLifecycle || actionPending || isPendingInstance;
   const mainAction = getMainAction(instance);
-  const mainDisabled = controlsBlocked || mainAction === null || !canRunAction(instance, mainAction);
+  const quota = instanceQuotaQuery.data;
+  const startLimitReached = mainAction === "start" && quota?.can_start === false;
+  const mainDisabled = controlsBlocked || mainAction === null || startLimitReached || !canRunAction(instance, mainAction);
   const restartDisabled = controlsBlocked || !canRunAction(instance, "restart");
   const stopDisabled = controlsBlocked || !canRunAction(instance, "stop");
   const resetDisabled = controlsBlocked || !canRunAction(instance, "reset");
@@ -328,6 +342,13 @@ export default function InstanceDeck({
           <RefreshCw size={28} />
         </button>
       </div>
+
+      {quota ? (
+        <p className="instance-helper-note">
+          {quota.active} of {quota.limit} private instance slots in use.
+          {startLimitReached ? " Stop an instance before starting another." : ""}
+        </p>
+      ) : null}
 
       {cycleOpen ? (
         <div className="instance-modal-backdrop" role="presentation" onClick={() => setCycleOpen(false)}>
