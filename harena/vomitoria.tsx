@@ -143,7 +143,7 @@ export function AuthPage() {
     setMessage(null);
     try {
       if (mode === "login") {
-        const { caller } = await auth.login(email, password);
+        await auth.login(email, password);
         await auth.refresh();
         navigate(returnTarget, { replace: true });
       } else {
