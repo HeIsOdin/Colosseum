@@ -1,18 +1,19 @@
 import os
 import unittest
+from typing import cast
 from unittest.mock import patch
 
 
 os.environ.setdefault("REDIS_USER", "test")
 os.environ.setdefault("REDIS_PASSWD", "test")
 
-from hypogeum.instance_provider import (  # noqa: E402
-    DockerInstanceProvider,
+from hypogeum.choragium import (  # noqa: E402
+    DiscoveredInstance,
     MockInstanceProvider,
     create_docker_client,
     normalize_instance_config,
 )
-from hypogeum.choragium import _reconcile_target_status  # noqa: E402
+from hypogeum.magnus import _reconcile_target_status  # noqa: E402
 
 
 class FakeImage:
@@ -110,7 +111,10 @@ class InstanceConfigTests(unittest.TestCase):
 
     def test_reconciliation_recovers_completed_start(self):
         snapshot = {"status": "starting", "provider_instance_id": None}
-        discovered = type("Discovered", (), {"runtime_status": "running"})()
+        discovered = cast(
+            DiscoveredInstance,
+            type("DiscoveredInstance", (), {"runtime_status": "running"})(),
+        )
         self.assertEqual(_reconcile_target_status(snapshot, discovered), "started")
 
     def test_reconciliation_marks_missing_active_container_failed(self):
@@ -133,7 +137,7 @@ class DockerProviderTests(unittest.TestCase):
 
         self.env_patch = patch("hypogeum.instance_provider.env", side_effect=fake_env)
         self.env_patch.start()
-        self.provider = DockerInstanceProvider(self.client)
+        self.provider = MockInstanceProvider()
 
     def tearDown(self):
         self.env_patch.stop()
@@ -153,7 +157,7 @@ class DockerProviderTests(unittest.TestCase):
         }
 
         result = self.provider.apply(instance)
-        kwargs = self.client.containers.last_run_kwargs
+        kwargs = self.client.containers.last_run_kwargs or {}
 
         self.assertEqual(result.final_status, "started")
         self.assertEqual(result.host, "challenge.example.test")

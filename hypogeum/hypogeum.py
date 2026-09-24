@@ -8,7 +8,7 @@ from hypogeum.auctoramentum import auctoramentum_bp
 from hypogeum.gladiator import gladiator_bp
 from hypogeum.sanitarium import sanitarium_bp
 from hypogeum.pugna import pugna_bp
-from hypogeum.choragium import choragium_bp
+from hypogeum.magnus import choragium_bp
 
 def configure_app(app: Flask) -> None:
     app.config['SECRET_KEY'] = env('COLOSSEUM_SECRET_KEY')[0]

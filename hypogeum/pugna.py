@@ -6,7 +6,7 @@ from psycopg2.extras import Json
 from hypogeum.armamentarium import (
     as_uuid, env, db_connect, raise_on_missing_series_and_challenges, refresh_series_and_challenges,
 )
-from hypogeum.instance_provider import normalize_instance_config
+from hypogeum.choragium import normalize_instance_config
 from hypogeum.vomitoria import (
     flag_hash, series_signup_required, admin_required, cooldown_check, locked_challenge_check
 )
